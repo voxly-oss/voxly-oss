@@ -32,20 +32,20 @@ jobs:
           images: |
             ${{ env.REGISTRY }}/${{ github.repository }}
 
-      - name: Lowercase Repo Name
-        run: |
-          echo "REPO=${GITHUB_REPOSITORY,,}" >>${GITHUB_ENV}
-
       - name: Build and push Backend
         uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
         with:
           context: ./backend
           push: true
-          tags: ghcr.io/${{ env.REPO }}-backend:latest,ghcr.io/${{ env.REPO }}-backend:${{ github.event.release.tag_name }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ github.event.repository.name }}-backend:latest
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ github.event.repository.name }}-backend:${{ github.event.release.tag_name }}
 
       - name: Build and push Frontend
         uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
         with:
           context: ./frontend
           push: true
-          tags: ghcr.io/${{ env.REPO }}-frontend:latest,ghcr.io/${{ env.REPO }}-frontend:${{ github.event.release.tag_name }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ github.event.repository.name }}-frontend:latest
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ github.event.repository.name }}-frontend:${{ github.event.release.tag_name }}
