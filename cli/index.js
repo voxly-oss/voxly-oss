@@ -19,6 +19,12 @@ const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'ut
 /* ─── Constants ─── */
 const REPO_URL = 'https://github.com/ravin972/voxly-backend.git';
 const CLEANUP_DIRS = ['cli', '.github', 'docs', 'scripts', 'nginx'];
+
+// Restrict PATH to known-safe OS directories — prevents PATH injection attacks
+// where a malicious directory earlier in PATH could shadow system binaries
+const SAFE_PATH = process.platform === 'win32'
+    ? 'C:\\Windows\\System32;C:\\Windows;C:\\Program Files\\Git\\cmd'
+    : '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin';
 const CLEANUP_FILES = [
     'AI-chat-service.md', 'docker setup.md', 'frontend.md',
     'implementation_plan.md', 'plan.md', 'system_design.md',
@@ -41,9 +47,10 @@ function generateSecret(length = 64) {
 
 function commandExists(cmd) {
     // Use execFileSync with an args array — no shell interpolation, no injection risk
+    // Pass explicit safe PATH env to prevent PATH-based injection
     const checker = process.platform === 'win32' ? 'where' : 'which';
     try {
-        execFileSync(checker, [cmd], { stdio: 'ignore' });
+        execFileSync(checker, [cmd], { stdio: 'ignore', env: { PATH: SAFE_PATH } });
         return true;
     } catch {
         return false;
@@ -52,9 +59,10 @@ function commandExists(cmd) {
 
 function runCmd(cmd, cwd, label) {
     // Split command into [file, ...args] so no shell is spawned (shell: false)
+    // Pass explicit safe PATH env to prevent PATH-based injection
     const [file, ...args] = cmd.split(' ');
     return new Promise((resolve, reject) => {
-        const child = spawn(file, args, { cwd, shell: false, stdio: 'pipe' });
+        const child = spawn(file, args, { cwd, shell: false, stdio: 'pipe', env: { ...process.env, PATH: SAFE_PATH } });
         let stderr = '';
         child.stderr.on('data', (d) => (stderr += d.toString()));
         child.on('close', (code) => {
@@ -169,10 +177,11 @@ async function scaffold(targetDir, config, options) {
     spinner.start(chalk.dim('Cloning Voxly from GitHub (this may take a moment)...'));
     try {
         // Use spawnSync with explicit args array — no shell, no injection risk
+        // Pass explicit safe PATH to prevent PATH-based injection
         const result = spawnSync(
             'git',
             ['clone', '--depth', '1', REPO_URL, targetDir],
-            { stdio: 'pipe', encoding: 'utf8' }
+            { stdio: 'pipe', encoding: 'utf8', env: { PATH: SAFE_PATH } }
         );
         if (result.status !== 0) throw new Error(result.stderr || 'git clone failed');
         spinner.succeed(chalk.green('Repository cloned'));
