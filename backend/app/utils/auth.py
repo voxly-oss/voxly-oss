@@ -7,7 +7,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 import jwt
 from jwt.exceptions import InvalidTokenError
-from passlib.context import CryptContext
+import bcrypt
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -15,23 +15,22 @@ from app.database import get_db
 from app.models.user import User
 from app.schemas.user import TokenData
 
-# Password hashing — bcrypt via passlib
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 # OAuth2 scheme for token extraction
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify a password against its hash (with SHA-256 pre-hashing for >72 char passwords)."""
-    hashed_input = hashlib.sha256(plain_password.encode()).hexdigest()
-    return pwd_context.verify(hashed_input, hashed_password)
+    """Verify a password against its hash using native bcrypt."""
+    try:
+        return bcrypt.checkpw(plain_password.encode(), hashed_password.encode())
+    except ValueError:
+        return False
 
 
 def get_password_hash(password: str) -> str:
-    """Hash a password (with SHA-256 pre-hashing for >72 char passwords)."""
-    hashed_input = hashlib.sha256(password.encode()).hexdigest()
-    return pwd_context.hash(hashed_input)
+    """Hash a password using native bcrypt."""
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(password.encode(), salt).decode()
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
