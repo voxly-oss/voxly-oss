@@ -1,0 +1,24 @@
+# Gitleaks configuration — manage false positives for this project
+# Docs: https://github.com/gitleaks/gitleaks#configuration
+
+title = "Voxly OSS Gitleaks Config"
+
+[extend]
+# Use the default gitleaks ruleset as the base
+useDefault = true
+
+# ── Allowlisted paths (never secret) ──────────────────────────────────────────
+[allowlist]
+description = "Global allowlist for known false positives"
+
+# sonar-project.properties contains project keys, not secrets
+paths = [
+    "sonar-project.properties",
+]
+
+# These patterns match our known-safe values that trigger generic-api-key rules
+regexes = [
+    # Sonar project/organization keys (format: org_project or org/project)
+    "ravin972_voxly-oss",
+    "ravin972",
+]
