@@ -26,7 +26,7 @@ slowapi==0.1.9
 
 # Billing & Payments
 stripe==14.4.1
-razorpay==1.4.2
+razorpay==2.0.1
 
 # Testing
 pytest==9.0.2
