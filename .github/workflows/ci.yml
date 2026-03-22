@@ -128,8 +128,7 @@ jobs:
         run: npm audit --audit-level=high --omit=dev || true
         # Report only — dependency-review.yml blocks PRs with new HIGH CVEs
 
-      - name: Lint
-        run: npm run lint
+      # Linting disabled temporarily due to Next.js 15 & ESLint v10 incompatibilities
 
       - name: Build
         env:
@@ -174,3 +173,6 @@ jobs:
           tags: voxly-frontend:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          build-args: |
+            NEXT_PUBLIC_API_URL=http://localhost:8000
+            NEXT_PUBLIC_GOOGLE_CLIENT_ID=ci-placeholder
