@@ -7,7 +7,7 @@ import ora from 'ora';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { execSync, spawn } from 'node:child_process';
+import { execFileSync, spawnSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -40,8 +40,10 @@ function generateSecret(length = 64) {
 }
 
 function commandExists(cmd) {
+    // Use execFileSync with an args array — no shell interpolation, no injection risk
+    const checker = process.platform === 'win32' ? 'where' : 'which';
     try {
-        execSync(`${process.platform === 'win32' ? 'where' : 'which'} ${cmd}`, { stdio: 'ignore' });
+        execFileSync(checker, [cmd], { stdio: 'ignore' });
         return true;
     } catch {
         return false;
@@ -49,8 +51,10 @@ function commandExists(cmd) {
 }
 
 function runCmd(cmd, cwd, label) {
+    // Split command into [file, ...args] so no shell is spawned (shell: false)
+    const [file, ...args] = cmd.split(' ');
     return new Promise((resolve, reject) => {
-        const child = spawn(cmd, { cwd, shell: true, stdio: 'pipe' });
+        const child = spawn(file, args, { cwd, shell: false, stdio: 'pipe' });
         let stderr = '';
         child.stderr.on('data', (d) => (stderr += d.toString()));
         child.on('close', (code) => {
@@ -164,7 +168,13 @@ async function scaffold(targetDir, config, options) {
     // 2. Clone repository (shallow — fast!)
     spinner.start(chalk.dim('Cloning Voxly from GitHub (this may take a moment)...'));
     try {
-        execSync(`git clone --depth 1 ${REPO_URL} "${targetDir}"`, { stdio: 'pipe' });
+        // Use spawnSync with explicit args array — no shell, no injection risk
+        const result = spawnSync(
+            'git',
+            ['clone', '--depth', '1', REPO_URL, targetDir],
+            { stdio: 'pipe', encoding: 'utf8' }
+        );
+        if (result.status !== 0) throw new Error(result.stderr || 'git clone failed');
         spinner.succeed(chalk.green('Repository cloned'));
     } catch (err) {
         spinner.fail(chalk.red('Failed to clone repository'));
