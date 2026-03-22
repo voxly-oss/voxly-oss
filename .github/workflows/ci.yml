@@ -86,7 +86,7 @@ jobs:
           retention-days: 7
 
       - name: Snyk Security Scan — Python
-        uses: snyk/actions/python@b98d498629f1c5e001b86f2ec040b0be60b19521 # v0.4.0
+        uses: snyk/actions/python@master
         continue-on-error: true  # Non-blocking: SNYK_TOKEN may not be set yet
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
@@ -138,7 +138,7 @@ jobs:
         run: npm run build
 
       - name: Snyk Security Scan — npm
-        uses: snyk/actions/node@b98d498629f1c5e001b86f2ec040b0be60b19521 # v0.4.0
+        uses: snyk/actions/node@master
         continue-on-error: true
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
