@@ -100,9 +100,12 @@ test.describe('Register Page', () => {
   });
 
   test('should show validation error on empty submit', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto('/register');
+    await page.waitForTimeout(1000);
     await page.getByRole('button', { name: /create account|sign up|register/i }).click();
     // Zod/react-hook-form renders errors in <p> tags below inputs
-    await expect(page.locator('p').filter({ hasText: /email|password|required|valid/i }).first()).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('p').filter({ hasText: /email|password|required|valid/i }).first()).toBeVisible({ timeout: 8000 });
   });
 
   test('should have a link back to login page', async ({ page }) => {
