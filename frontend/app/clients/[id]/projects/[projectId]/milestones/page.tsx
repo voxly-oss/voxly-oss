@@ -49,7 +49,7 @@ const milestoneSchema = z.object({
     title: z.string().min(1, 'Title is required'),
     description: z.string().optional(),
     status: z.string().optional(),
-    progress: z.coerce.number().min(0).max(100).optional(),
+    progress: z.number().min(0).max(100).optional().default(0),
     due_date: z.string().optional(),
 });
 
@@ -89,8 +89,9 @@ export default function MilestonesPage() {
         },
     });
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const milestoneForm = useForm<MilestoneFormData>({
-        resolver: zodResolver(milestoneSchema),
+        resolver: zodResolver(milestoneSchema) as any,
         defaultValues: {
             status: 'pending',
             progress: 0,

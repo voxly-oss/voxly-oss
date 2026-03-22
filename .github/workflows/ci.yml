@@ -128,7 +128,9 @@ jobs:
         run: npm audit --audit-level=high --omit=dev || true
         # Report only — dependency-review.yml blocks PRs with new HIGH CVEs
 
-      # Linting disabled temporarily due to Next.js 15 & ESLint v10 incompatibilities
+      - name: Lint
+        run: npm run lint
+        continue-on-error: true  # eslint-config-next@16 has circular JSON bug with ESLint 9
 
       - name: Build
         env:
