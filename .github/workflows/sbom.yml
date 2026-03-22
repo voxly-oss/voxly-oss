@@ -1,0 +1,51 @@
+name: "SBOM Generation (Syft)"
+
+on:
+  release:
+    types: [published]
+  push:
+    branches: [main]
+    paths:
+      - "backend/requirements.txt"
+      - "frontend/package-lock.json"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: read
+
+jobs:
+  sbom:
+    name: Generate Software Bill of Materials
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install Syft
+        uses: anchore/sbom-action/download-syft@v0
+
+      - name: Generate SBOM for backend
+        uses: anchore/sbom-action@v0
+        with:
+          path: ./backend
+          format: spdx-json
+          output-file: sbom-backend.spdx.json
+          artifact-name: sbom-backend.spdx.json
+
+      - name: Generate SBOM for frontend
+        uses: anchore/sbom-action@v0
+        with:
+          path: ./frontend
+          format: spdx-json
+          output-file: sbom-frontend.spdx.json
+          artifact-name: sbom-frontend.spdx.json
+
+      - name: Attach SBOMs to GitHub Release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            sbom-backend.spdx.json
+            sbom-frontend.spdx.json

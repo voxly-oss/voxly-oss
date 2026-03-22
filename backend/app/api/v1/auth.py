@@ -446,7 +446,7 @@ async def update_profile(
     update_fields = {k: v for k, v in update_fields.items() if k not in forbidden}
 
     for field, value in update_fields.items():
-        setattr(current_user, field, value)
+        setattr(current_user, str(field), value)
 
     try:
         db.commit()

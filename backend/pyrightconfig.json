@@ -1,0 +1,20 @@
+{
+  "include": ["app", "alembic"],
+  "exclude": ["**/__pycache__", ".venv", "venv", "env", "*.egg-info"],
+  "venvPath": ".",
+  "venv": ".venv",
+  "pythonVersion": "3.12",
+  "pythonPlatform": "Linux",
+  "typeCheckingMode": "standard",
+  "reportMissingModuleSource": "none",
+  "reportMissingImports": "warning",
+  "reportUnknownVariableType": "none",
+  "reportUnknownMemberType": "none",
+  "reportUnknownArgumentType": "none",
+  "reportUnknownParameterType": "none",
+  "reportOperatorIssue": "warning",
+  "reportAttributeAccessIssue": "warning",
+  "reportCallIssue": "warning",
+  "reportReturnType": "warning",
+  "stubPath": "typestubs"
+}
