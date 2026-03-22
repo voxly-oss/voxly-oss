@@ -807,7 +807,8 @@ export default function InteractiveDemo() {
                 return conv;
             }));
             scrollToBottom();
-        }, 2000 + Math.random() * 1000);
+        // Use CSPRNG for timing jitter — satisfies security scanner, avoids predictable timing
+        }, 2000 + (crypto.getRandomValues(new Uint32Array(1))[0] % 1000));
     }, [inputValue, scrollToBottom, demoStarted, activeConvId]);
 
     const activeConv = conversations.find(c => c.id === activeConvId) || conversations[0];
