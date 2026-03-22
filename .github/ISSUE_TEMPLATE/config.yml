@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 💬 Discord Community
+    url: https://discord.gg/voxly
+    about: Ask questions and get help from the community
+  - name: 📖 Documentation
+    url: https://voxly.dev/docs
+    about: Check our documentation for answers
+  - name: 💡 Feature Discussion
+    url: https://github.com/ravin972/voxly-backend/discussions/categories/ideas
+    about: Discuss and vote on feature ideas

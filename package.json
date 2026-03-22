@@ -1,0 +1,28 @@
+{
+  "name": "voxly",
+  "version": "1.0.0",
+  "description": "<div align=\"center\">",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "prepare": "husky"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ravin972/voxly.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/ravin972/voxly/issues"
+  },
+  "homepage": "https://github.com/ravin972/voxly#readme",
+  "devDependencies": {
+    "husky": "^9.1.7"
+  }
+}

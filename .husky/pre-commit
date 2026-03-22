@@ -1,0 +1,17 @@
+#!/bin/sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+echo "🛡️  Voxly Pre-commit Security Check Running..."
+
+# 1. Prevent .env files from being committed
+if git diff --cached --name-only | grep -E "\.env$|\.env\."; then
+  if ! git diff --cached --name-only | grep -E "\.env\.example$"; then
+    echo "🚨 ERROR: You are trying to commit a .env file!"
+    echo "This is blocked by Husky to prevent leaking your API keys."
+    echo "To bypass (not recommended): git commit --no-verify"
+    exit 1
+  fi
+fi
+
+# 2. Add any other checks here later (like pytest or npm lint)
+echo "✅ Security check passed."

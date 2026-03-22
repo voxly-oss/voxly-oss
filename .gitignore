@@ -1,0 +1,176 @@
+# ─── Python ───
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+.venv/
+venv/
+env/
+.Python
+
+# ─── Node.js ───
+node_modules/
+.next/
+out/
+.turbo/
+*.tsbuildinfo
+.npm
+.yarn/
+
+# ─── Environment ───
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# ─── IDE ───
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# ─── Docker ───
+docker-compose.override.yml
+pgdata/
+
+# ─── OS ───
+Thumbs.db
+Desktop.ini
+*.lnk
+
+# ─── Testing ───
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+
+# ─── Logs ───
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ─── Build artifacts ───
+*.whl
+*.tar.gz
+
+# ═══════════════════════════════════════════════════════
+# ─── INTERNAL / CONFIDENTIAL (NEVER PUSH TO PUBLIC) ───
+# ═══════════════════════════════════════════════════════
+
+# ─── Strategy & Internal Docs ───
+docs/strategy/
+docs/internal/
+docs/investor/
+*.pitch
+*.pitch.md
+# Founder specific internal logs
+CLAUDE.md
+SESSION_NOTES.md
+implementation_plan.md
+docs/plan.md
+
+# ─── Debug / Test Scripts (may contain tokens) ───
+test_ws.py
+test_ws.js
+test_ws.*
+**/test_ws.*
+
+# ─── Secrets & Certificates ───
+*.pem
+*.key
+*.cert
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+secrets/
+.secrets
+*.secret
+
+# ─── Database dumps & backups ───
+*.sql
+*.dump
+*.bak
+*.sqlite
+*.sqlite3
+*.db
+backups/
+
+# ─── API key files ───
+service-account*.json
+*credentials*.json
+firebase*.json
+
+# ─── Gemini / AI assistant artifacts ───
+.gemini/
+# Keep .agent/workflows/ public (contributors use them)
+# but gitignore any local agent state/cache
+.agent/cache/
+.agent/state/
+.agent/*.log
+
+# ─── Deployment overrides (may contain server IPs/secrets) ───
+docker-compose.prod.yml
+docker-compose.override.yml
+nginx.conf
+*.nginx
+deploy.sh
+.deploy/
+
+# ─── OS junk ───
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.lnk
+ehthumbs.db
+ehthumbs_vista.db
+[Dd]esktop.ini
+$RECYCLE.BIN/
+
+# ─── Misc ───
+*.bak
+*.tmp
+*.temp
+*.orig
+*.rej
+.cache/
+.parcel-cache/
+
+# ─── Debug artifacts ───
+agent_error.txt
+integration_error.txt
+test_output.txt
+*.debug
+*.trace
+
+# ─── Dev-only scripts (internal tooling, not for users) ───
+check_client.py
+fix_phone_number.py
+init_dogfooding.py
+verify_ai_setup.py
+verify_phone.py
+test_redis.py
+check_images.py
+crop_logo.py
+scripts/reset_password.py
+
+# ─── Lint/build output files ───
+lint_output.txt
+lint_log.txt
+build_log.txt
+publish_log.txt
+
+# ─── Reference/scratch image files ───
+*_ref.png
+*_ref.webp
+*_ref.jpg
+cohere.svg
+groq.svg

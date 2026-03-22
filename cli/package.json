@@ -1,0 +1,46 @@
+{
+  "name": "create-voxly",
+  "version": "2.0.2",
+  "type": "module",
+  "description": "CLI to scaffold a Voxly instance — AI-powered client communication via WhatsApp + GitHub",
+  "main": "index.js",
+  "bin": {
+    "create-voxly": "./index.js"
+  },
+  "files": [
+    "index.js",
+    "package.json",
+    "README.md"
+  ],
+  "keywords": [
+    "voxly",
+    "whatsapp",
+    "ai",
+    "client-management",
+    "github",
+    "agency",
+    "scaffolding",
+    "cli",
+    "create",
+    "scaffold"
+  ],
+  "author": "Voxly Contributors",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ravin972/voxly-backend.git"
+  },
+  "homepage": "https://voxly.dev",
+  "bugs": {
+    "url": "https://github.com/ravin972/voxly-backend/issues"
+  },
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "commander": "^12.1.0",
+    "inquirer": "^9.2.15",
+    "ora": "^8.0.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

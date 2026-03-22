@@ -1,0 +1,14 @@
+# Default owners for everything
+* @ravin972
+
+# Backend
+/backend/ @ravin972
+
+# Frontend
+/frontend/ @ravin972
+
+# CI/CD
+/.github/ @ravin972
+
+# Documentation
+*.md @ravin972
