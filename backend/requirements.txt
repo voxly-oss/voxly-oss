@@ -10,7 +10,7 @@ PyJWT>=2.12.0         # replaces python-jose (CVE-2024-33664, CVE-2024-33663)
 passlib[bcrypt]==1.7.4
 python-multipart==0.0.22
 python-dotenv==1.2.2
-cryptography>=42.0.0      # direct dep (ai_keys.py) + Snyk security pin
+cryptography>=46.0.5      # direct dep (ai_keys.py) + Snyk security pin
 google-auth>=2.28.0       # direct dep (auth.py Google OAuth)
 zipp>=3.19.1              # pinned by Snyk to avoid CVE
 
@@ -38,3 +38,7 @@ httpx==0.28.1
 resend>=2.1.0
 requests>=2.32.4 # not directly required, pinned by Snyk to avoid a vulnerability
 urllib3>=2.6.3 # not directly required, pinned by Snyk to avoid a vulnerability
+aiohttp>=3.9.0 # not directly required, pinned by Snyk to avoid a vulnerability
+pyasn1>=0.6.2 # not directly required, pinned by Snyk to avoid a vulnerability
+anyio>=4.4.0 # not directly required, pinned by Snyk to avoid a vulnerability
+dnspython>=2.6.1 # not directly required, pinned by Snyk to avoid a vulnerability
