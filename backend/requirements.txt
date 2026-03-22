@@ -1,15 +1,15 @@
-fastapi==0.109.0
-uvicorn[standard]==0.27.0
-sqlalchemy==2.0.25
-alembic==1.13.1
-psycopg2-binary==2.9.9
-pydantic==2.5.3
-pydantic-settings==2.1.0
+fastapi==0.135.1
+uvicorn[standard]==0.42.0
+sqlalchemy==2.0.48
+alembic==1.18.4
+psycopg2-binary==2.9.11
+pydantic==2.12.5
+pydantic-settings==2.13.1
 email-validator>=2.0.0
-python-jose[cryptography]==3.3.0
+python-jose[cryptography]==3.5.0
 passlib[bcrypt]==1.7.4
 python-multipart==0.0.22
-python-dotenv==1.0.0
+python-dotenv==1.2.2
 cryptography>=42.0.0      # direct dep (ai_keys.py) + Snyk security pin
 google-auth>=2.28.0       # direct dep (auth.py Google OAuth)
 zipp>=3.19.1              # pinned by Snyk to avoid CVE
@@ -18,10 +18,10 @@ zipp>=3.19.1              # pinned by Snyk to avoid CVE
 anthropic>=0.30.0
 openai>=1.12.0
 google-genai>=1.0.0
-PyGithub==2.1.1
+PyGithub==2.8.1
 twilio==8.11.1
 redis==5.0.1
-celery==5.3.6
+celery==5.6.2
 slowapi==0.1.9
 
 # Billing & Payments
@@ -31,4 +31,4 @@ razorpay==1.4.2
 # Testing
 pytest==7.4.4
 pytest-asyncio==0.23.5
-httpx==0.26.0
+httpx==0.28.1
