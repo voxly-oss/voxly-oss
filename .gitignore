@@ -26,6 +26,9 @@ out/
 .env.local
 .env.*.local
 !.env.example
+# Cloud Run secrets file — NEVER commit (contains production keys)
+**/env.yaml
+**/*.env.yaml
 
 # ─── IDE ───
 .vscode/
@@ -49,6 +52,8 @@ Desktop.ini
 htmlcov/
 .pytest_cache/
 .mypy_cache/
+frontend/playwright-report/
+frontend/test-results/
 
 # ─── Logs ───
 *.log
