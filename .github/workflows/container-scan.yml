@@ -41,7 +41,8 @@ jobs:
 
       - name: Upload Trivy backend results to GitHub Security
         uses: github/codeql-action/upload-sarif@9e8d0789d4a0fa9ceb6b1738f7e269594bdd67f0 # v3.28.9
-        if: always()               # upload even if previous step had issues
+        continue-on-error: true   # SARIF upload requires GitHub Advanced Security (org-only)
+        if: always()
         with:
           sarif_file: "trivy-backend.sarif"
           category: "trivy-backend"
@@ -76,6 +77,7 @@ jobs:
 
       - name: Upload Trivy frontend results to GitHub Security
         uses: github/codeql-action/upload-sarif@9e8d0789d4a0fa9ceb6b1738f7e269594bdd67f0 # v3.28.9
+        continue-on-error: true   # SARIF upload requires GitHub Advanced Security (org-only)
         if: always()
         with:
           sarif_file: "trivy-frontend.sarif"
@@ -102,6 +104,7 @@ jobs:
 
       - name: Upload Trivy filesystem results
         uses: github/codeql-action/upload-sarif@9e8d0789d4a0fa9ceb6b1738f7e269594bdd67f0 # v3.28.9
+        continue-on-error: true   # SARIF upload requires GitHub Advanced Security (org-only)
         if: always()
         with:
           sarif_file: "trivy-fs.sarif"
