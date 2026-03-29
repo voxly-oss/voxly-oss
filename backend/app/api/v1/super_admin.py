@@ -36,7 +36,7 @@ USER_NOT_FOUND = "User not found"
 
 # ─── Auth Guard ──────────────────────────────────────────────────────────────
 
-def require_super_admin(
+def require_super_admin(*, 
     x_admin_secret: Optional[str] = Header(None, alias="X-Admin-Secret"),
     current_user: Annotated[User , Depends(get_current_user)],
 ) -> User:
