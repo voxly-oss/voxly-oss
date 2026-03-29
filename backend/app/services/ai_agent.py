@@ -13,6 +13,117 @@ from app.tools.github_tools import GitHubSearchIssuesTool, GitHubGetFileTool, Gi
 from app.tools.kb_tools import LocalDocsTool
 
 logger = logging.getLogger(__name__)
+ALLOWED_IMAGE_HOSTS = {
+    "api.twilio.com",
+    "media.twiliocdn.com",
+    "mms.twilio.com",
+    "media.giphy.com",
+    "api.github.com",
+    "raw.githubusercontent.com",
+    "user-images.githubusercontent.com",
+    "camo.githubusercontent.com",
+}
+MAX_IMAGE_BYTES = 10 * 1024 * 1024
+
+
+async def _build_image_block(img_url: str) -> dict | None:
+    try:
+        parsed = urllib.parse.urlparse(img_url)
+        if parsed.scheme not in ("https", "http"):
+            logger.warning(f"Rejected image with non-http scheme: {img_url}")
+            return None
+        host = parsed.netloc.lower().split(":")[0]
+        if not any(host == allowed or host.endswith("." + allowed) for allowed in ALLOWED_IMAGE_HOSTS):
+            logger.warning(f"Rejected image from disallowed host: {host}")
+            return None
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(img_url)
+            if resp.status_code != 200:
+                logger.warning(f"Failed to download image {img_url}: {resp.status_code}")
+                return None
+
+            body = resp.content
+            if len(body) > MAX_IMAGE_BYTES:
+                logger.warning(f"Image from {img_url} exceeds size limit ({len(body)} bytes) — skipped")
+                return None
+
+            media_type = resp.headers.get("content-type", "image/jpeg").split(";")[0].strip()
+            encoded_image = base64.b64encode(body).decode("utf-8")
+            logger.info(f"Attached image from {host} ({media_type}, {len(body)} bytes)")
+            return {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": media_type,
+                    "data": encoded_image,
+                },
+            }
+    except Exception as exc:
+        logger.error(f"Error processing image {img_url}: {exc}")
+        return None
+
+
+async def _build_messages(text_content: str, images: List[str] | None) -> List[Dict[str, Any]]:
+    if not images:
+        return [{"role": "user", "content": text_content}]
+
+    initial_content = []
+    for img_url in images:
+        image_block = await _build_image_block(img_url)
+        if image_block:
+            initial_content.append(image_block)
+    initial_content.append({"type": "text", "text": text_content})
+    return [{"role": "user", "content": initial_content}]
+
+
+def _update_usage(provider_response, total_tokens_used: int, model_used: str) -> tuple[int, str]:
+    if not hasattr(provider_response, "usage"):
+        return total_tokens_used, model_used
+
+    usage = provider_response.usage
+    in_tokens = getattr(usage, "input_tokens", 0)
+    out_tokens = getattr(usage, "output_tokens", 0)
+    total_tokens_used += in_tokens + out_tokens
+    if hasattr(provider_response, "model"):
+        model_used = provider_response.model
+    return total_tokens_used, model_used
+
+
+async def _append_tool_results(messages, content, tool_map) -> None:
+    tool_uses = [block for block in content if block.type == "tool_use"]
+    for tool_use in tool_uses:
+        tool_name = tool_use.name
+        tool_input = tool_use.input
+        tool_id = tool_use.id
+        logger.info(f"Agent calling tool: {tool_name} with {tool_input}")
+
+        if tool_name in tool_map:
+            tool_instance = tool_map[tool_name]
+            try:
+                tool_result = await tool_instance.run(**tool_input)
+            except Exception as exc:
+                tool_result = f"Tool Execution Error: {str(exc)}"
+        else:
+            tool_result = f"Error: Tool {tool_name} not found."
+
+        messages.append(
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tool_id,
+                        "content": str(tool_result),
+                    }
+                ],
+            }
+        )
+
+
+def _extract_text_response(content) -> str:
+    text_blocks = [block.text for block in content if block.type == "text"]
+    return "\n".join(text_blocks)
 
 class VoxlyAgent:
     """
@@ -88,75 +199,7 @@ class VoxlyAgent:
         # If no images, we can use a simple string or a list with one text block
         # To be safe and consistent, let's use list of blocks if images exist
         
-        if images:
-            initial_content = []
-            # --- SSRF guard -------------------------------------------------
-            # Only fetch images from known-safe origins.
-            # WhatsApp media is served from twilio CDN; bug screenshots may come
-            # from GitHub.  Reject everything else.
-            ALLOWED_IMAGE_HOSTS = {
-                "api.twilio.com",
-                "media.twiliocdn.com",
-                "mms.twilio.com",
-                "media.giphy.com",        # sometimes used in WA
-                "api.github.com",
-                "raw.githubusercontent.com",
-                "user-images.githubusercontent.com",
-                "camo.githubusercontent.com",
-            }
-            MAX_IMAGE_BYTES = 10 * 1024 * 1024  # 10 MB hard cap
-            # ----------------------------------------------------------------
-            for img_url in images:
-                try:
-                    parsed = urllib.parse.urlparse(img_url)
-                    if parsed.scheme not in ("https", "http"):
-                        logger.warning(f"Rejected image with non-http scheme: {img_url}")
-                        continue
-                    host = parsed.netloc.lower().split(":")[0]
-                    if not any(host == allowed or host.endswith("." + allowed)
-                               for allowed in ALLOWED_IMAGE_HOSTS):
-                        logger.warning(f"Rejected image from disallowed host: {host}")
-                        continue
-
-                    async with httpx.AsyncClient(timeout=10.0) as client:
-                        resp = await client.get(img_url)
-                        if resp.status_code == 200:
-                            body = resp.content
-                            if len(body) > MAX_IMAGE_BYTES:
-                                logger.warning(
-                                    f"Image from {img_url} exceeds size limit "
-                                    f"({len(body)} bytes) — skipped"
-                                )
-                                continue
-                            media_type = resp.headers.get("content-type", "image/jpeg").split(";")[0].strip()
-                            encoded_image = base64.b64encode(body).decode("utf-8")
-                            initial_content.append({
-                                "type": "image",
-                                "source": {
-                                    "type": "base64",
-                                    "media_type": media_type,
-                                    "data": encoded_image
-                                }
-                            })
-                            logger.info(f"Attached image from {host} ({media_type}, {len(body)} bytes)")
-                        else:
-                            logger.warning(f"Failed to download image {img_url}: {resp.status_code}")
-                except Exception as e:
-                    logger.error(f"Error processing image {img_url}: {e}")
-
-            
-            # Add text after images (or before, depending on preference. Anthropic recommends text after images usually?)
-            # Actually, standard is image then text or text then image. Let's put text last as the "prompt".
-            initial_content.append({"type": "text", "text": text_content})
-            
-            messages = [
-                {"role": "user", "content": initial_content}
-            ]
-        else:
-            # Standard text-only message
-            messages = [
-                {"role": "user", "content": text_content}
-            ]
+        messages = await _build_messages(text_content, images)
         
         step_count = 0
         final_response = ""
@@ -187,61 +230,22 @@ class VoxlyAgent:
             content = provider_response.content if provider_response.content else []
 
             # Track Token Usage
-            if hasattr(provider_response, 'usage'):
-                usage = provider_response.usage
-                # Anthropic object usage (input_tokens, output_tokens)
-                in_tokens = getattr(usage, 'input_tokens', 0)
-                out_tokens = getattr(usage, 'output_tokens', 0)
-                total_tokens_used += (in_tokens + out_tokens)
-                
-                # Update last used model if available
-                if hasattr(provider_response, 'model'):
-                    model_used = provider_response.model
+            total_tokens_used, model_used = _update_usage(
+                provider_response,
+                total_tokens_used,
+                model_used,
+            )
 
             # Append assistant's thought process to history
             # Anthropic expects the exact message structure back
             messages.append({"role": "assistant", "content": content})
             
             if stop_reason == "tool_use":
-                # Find the tool use block
-                tool_uses = [block for block in content if block.type == "tool_use"]
-                
-                for tool_use in tool_uses:
-                    tool_name = tool_use.name
-                    tool_input = tool_use.input
-                    tool_id = tool_use.id
-                    
-                    logger.info(f"Agent calling tool: {tool_name} with {tool_input}")
-                    
-                    # Execute Tool
-                    if tool_name in self.tool_map:
-                        tool_instance = self.tool_map[tool_name]
-                        try:
-                            # Run async
-                            tool_result = await tool_instance.run(**tool_input)
-                        except Exception as e:
-                            tool_result = f"Tool Execution Error: {str(e)}"
-                    else:
-                        tool_result = f"Error: Tool {tool_name} not found."
-                    
-                    # Add result to history
-                    messages.append({
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": tool_id,
-                                "content": str(tool_result)
-                            }
-                        ]
-                    })
-                # Loop continues to let LLM synthesize the answer
+                await _append_tool_results(messages, content, self.tool_map)
                 continue
             
             elif stop_reason == "end_turn":
-                # LLM is done, return the text content
-                text_blocks = [b.text for b in content if b.type == "text"]
-                final_response = "\n".join(text_blocks)
+                final_response = _extract_text_response(content)
                 break
             
             else:

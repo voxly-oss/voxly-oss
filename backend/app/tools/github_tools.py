@@ -2,6 +2,9 @@ from typing import Any, Dict, List
 from .base import Tool
 import httpx
 import os
+REPO_OWNER_DESCRIPTION = "Owner of the repository"
+REPO_NAME_DESCRIPTION = "Name of the repository"
+GITHUB_TOKEN_MISSING = "Error: GITHUB_TOKEN not configured."
 
 class GitHubSearchIssuesTool(Tool):
     name = "github_search_issues"
@@ -15,11 +18,11 @@ class GitHubSearchIssuesTool(Tool):
             },
             "repo_owner": {
                 "type": "string",
-                "description": "Owner of the repository"
+                "description": REPO_OWNER_DESCRIPTION
             },
             "repo_name": {
                 "type": "string",
-                "description": "Name of the repository"
+                "description": REPO_NAME_DESCRIPTION
             }
         },
         "required": ["query", "repo_owner", "repo_name"]
@@ -28,7 +31,7 @@ class GitHubSearchIssuesTool(Tool):
     async def run(self, query: str, repo_owner: str, repo_name: str) -> str:
         token = os.getenv("GITHUB_TOKEN")
         if not token:
-            return "Error: GITHUB_TOKEN not configured."
+            return GITHUB_TOKEN_MISSING
 
         async with httpx.AsyncClient() as client:
             headers = {
@@ -72,11 +75,11 @@ class GitHubGetFileTool(Tool):
             },
             "repo_owner": {
                 "type": "string",
-                "description": "Owner of the repository"
+                "description": REPO_OWNER_DESCRIPTION
             },
             "repo_name": {
                 "type": "string",
-                "description": "Name of the repository"
+                "description": REPO_NAME_DESCRIPTION
             }
         },
         "required": ["path", "repo_owner", "repo_name"]
@@ -85,7 +88,7 @@ class GitHubGetFileTool(Tool):
     async def run(self, path: str, repo_owner: str, repo_name: str) -> str:
         token = os.getenv("GITHUB_TOKEN")
         if not token:
-            return "Error: GITHUB_TOKEN not configured."
+            return GITHUB_TOKEN_MISSING
 
         async with httpx.AsyncClient() as client:
             headers = {
@@ -123,11 +126,11 @@ class GitHubCreateIssueTool(Tool):
             },
             "repo_owner": {
                 "type": "string",
-                "description": "Owner of the repository"
+                "description": REPO_OWNER_DESCRIPTION
             },
             "repo_name": {
                 "type": "string",
-                "description": "Name of the repository"
+                "description": REPO_NAME_DESCRIPTION
             },
             "labels": {
                 "type": "array",
@@ -141,7 +144,7 @@ class GitHubCreateIssueTool(Tool):
     async def run(self, title: str, body: str, repo_owner: str, repo_name: str, labels: List[str] = None) -> str:
         token = os.getenv("GITHUB_TOKEN")
         if not token:
-            return "Error: GITHUB_TOKEN not configured."
+            return GITHUB_TOKEN_MISSING
 
         async with httpx.AsyncClient() as client:
             headers = {

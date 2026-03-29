@@ -128,19 +128,26 @@ const GitHubSkeleton = ({ isHovered = false }: { isHovered?: boolean }) => (
 
 // 3. Analytics Visual
 const AnalyticsSkeleton = ({ isHovered = false }: { isHovered?: boolean }) => {
-    const heights = [40, 70, 50, 90, 65, 85];
+    const bars = [
+        { id: 'analytics-bar-1', height: 40 },
+        { id: 'analytics-bar-2', height: 70 },
+        { id: 'analytics-bar-3', height: 50 },
+        { id: 'analytics-bar-4', height: 90 },
+        { id: 'analytics-bar-5', height: 65 },
+        { id: 'analytics-bar-6', height: 85 },
+    ];
     return (
         <div className="w-full h-full flex items-end justify-between px-4 pb-4 pt-8 gap-2">
-            {heights.map((h, i) => (
+            {bars.map((bar, index) => (
                 <motion.div
-                    key={i}
+                    key={bar.id}
                     initial={{ height: 10 }}
-                    animate={{ height: isHovered ? `${h}%` : "10px" }}
-                    transition={{ duration: 0.5, delay: isHovered ? i * 0.05 : 0 }}
+                    animate={{ height: isHovered ? `${bar.height}%` : "10px" }}
+                    transition={{ duration: 0.5, delay: isHovered ? index * 0.05 : 0 }}
                     className="w-full rounded-sm"
                     style={{
                         background: isHovered 
-                            ? `linear-gradient(to top, rgba(139, 92, 246, ${0.4 + (h / 200)}), rgba(6, 182, 212, ${0.2 + (h / 300)}))`
+                            ? `linear-gradient(to top, rgba(139, 92, 246, ${0.4 + (bar.height / 200)}), rgba(6, 182, 212, ${0.2 + (bar.height / 300)}))`
                             : 'rgba(255,255,255,0.05)',
                     }}
                 />
@@ -219,9 +226,9 @@ export default function FeaturesGrid() {
                  </h2>
              </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-7xl mx-auto">
-                {items.map((item, i) => (
+                {items.map((item) => (
                     <BentoItem
-                        key={i}
+                        key={item.title}
                         title={item.title}
                         description={item.description}
                         header={item.header}

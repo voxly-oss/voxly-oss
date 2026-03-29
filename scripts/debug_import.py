@@ -3,6 +3,7 @@ import sys
 
 # Add backend to path so we can import app modules
 sys.path.append(os.path.join(os.getcwd(), "backend"))
+SUCCESS_MESSAGE = "   Success."
 
 print("--- Debugging Imports ---")
 
@@ -10,7 +11,7 @@ try:
     print("1. Importing app.config...")
     try:
         from app.config import get_settings
-        print("   Success.")
+        print(SUCCESS_MESSAGE)
         
         print("2. Loading settings...")
         s = get_settings()
@@ -30,11 +31,11 @@ try:
     print("3. Importing anthropic...")
     try:
         from anthropic import Anthropic
-        print("   Success.")
+        print(SUCCESS_MESSAGE)
         
         print("4. Initializing Anthropic client...")
         a = Anthropic(api_key="sk-test-123")
-        print("   Success.")
+        print(SUCCESS_MESSAGE)
     except Exception as e:
         print(f"   FAILED in anthropic step: {e}")
         import traceback
@@ -46,7 +47,7 @@ try:
     print("5. Importing Tool base...")
     try:
         from app.tools.base import Tool
-        print("   Success.")
+        print(SUCCESS_MESSAGE)
     except Exception as e:
         print(f"   FAILED in Tool step: {e}")
         import traceback

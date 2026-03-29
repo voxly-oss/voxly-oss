@@ -30,6 +30,40 @@ interface Conversation {
     messages: ChatMessage[];
 }
 
+function scheduleDemoNotification(onShow: () => void) {
+    setTimeout(onShow, 1200);
+}
+
+function handleDemoIntersection(
+    entries: IntersectionObserverEntry[],
+    inViewRef: React.MutableRefObject<boolean>,
+    onShowNotification: () => void,
+) {
+    entries.forEach((entry) => {
+        if (entry.isIntersecting && !inViewRef.current) {
+            inViewRef.current = true;
+            scheduleDemoNotification(onShowNotification);
+        }
+    });
+}
+
+function appendAIMessage(
+    conversations: Conversation[],
+    activeConvId: string,
+    aiMsg: ChatMessage,
+) {
+    return conversations.map((conv) => {
+        if (conv.id === activeConvId) {
+            return {
+                ...conv,
+                messages: [...conv.messages, aiMsg],
+                lastMessage: aiMsg.text,
+            };
+        }
+        return conv;
+    });
+}
+
 /* ─────────────────── Mock Data ─────────────────── */
 const initialConversations: Conversation[] = [
     {
@@ -707,6 +741,7 @@ export default function InteractiveDemo() {
     // Use an internal ref for intersection to avoid re-triggering
     const sectionRef = useRef<HTMLDivElement>(null);
     const inViewRef = useRef(false);
+    const showDemoNotification = useCallback(() => setShowNotification(true), []);
     
     // Scroll handling
     const whatsappScrollRef = useRef<HTMLDivElement>(null);
@@ -722,18 +757,12 @@ export default function InteractiveDemo() {
     // Observer for "Landing" simulation
     useEffect(() => {
         const observer = new IntersectionObserver((entries) => {
-            entries.forEach(entry => {
-                if (entry.isIntersecting && !inViewRef.current) {
-                    inViewRef.current = true; // Only trigger once
-                    // Delay notification a bit
-                    setTimeout(() => setShowNotification(true), 1200);
-                }
-            });
+            handleDemoIntersection(entries, inViewRef, showDemoNotification);
         }, { threshold: 0.4 });
         
         if (sectionRef.current) observer.observe(sectionRef.current);
         return () => observer.disconnect();
-    }, []);
+    }, [showDemoNotification]);
 
     // Start Demo Logic (Only once or on notification click)
     const startDemo = useCallback(() => {
@@ -796,16 +825,7 @@ export default function InteractiveDemo() {
                 read: true,
             };
             
-            setConversations(prev => prev.map(conv => {
-                if (conv.id === activeConvId) {
-                    return {
-                        ...conv,
-                        messages: [...conv.messages, aiMsg],
-                        lastMessage: aiMsg.text,
-                    };
-                }
-                return conv;
-            }));
+            setConversations((prev) => appendAIMessage(prev, activeConvId, aiMsg));
             scrollToBottom();
         // Use CSPRNG for timing jitter — satisfies security scanner, avoids predictable timing
         }, 2000 + (crypto.getRandomValues(new Uint32Array(1))[0] % 1000));

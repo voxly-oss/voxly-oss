@@ -158,7 +158,6 @@ export default function SettingsPage() {
 
     // Billing state
     const [usage, setUsage] = useState<UsageData | null>(null);
-    const [isUsageLoading, setIsUsageLoading] = useState(false);
     const [plans, setPlans] = useState<PlanData[]>([]);
     const [isPlansLoading, setIsPlansLoading] = useState(false);
     const [subscription, setSubscription] = useState<SubscriptionData | null>(null);
@@ -212,13 +211,10 @@ export default function SettingsPage() {
     }, []);
 
     const fetchUsage = useCallback(async () => {
-        setIsUsageLoading(true);
         try {
             const res = await billingAPI.getUsage();
             setUsage(res.data);
-        } catch { /* ignore */ } finally {
-            setIsUsageLoading(false);
-        }
+        } catch { /* ignore */ }
     }, []);
 
     const fetchPlans = useCallback(async () => {
@@ -395,7 +391,7 @@ export default function SettingsPage() {
                 document.body.appendChild(ta);
                 ta.select();
                 document.execCommand('copy');
-                document.body.removeChild(ta);
+                ta.remove();
             }
             toast({ title: 'Copied!', description: 'API key copied to clipboard.' });
         } catch {
@@ -616,6 +612,7 @@ export default function SettingsPage() {
                                                 </div>
                                                 <label className="relative inline-flex items-center cursor-pointer">
                                                     <input type="checkbox" defaultChecked className="sr-only peer" />
+                                                    <span className="sr-only">{item.title}</span>
                                                     <div className="w-9 h-5 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white/80 after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-gradient-to-r peer-checked:from-violet-600 peer-checked:to-blue-600"></div>
                                                 </label>
                                             </div>
@@ -708,63 +705,73 @@ export default function SettingsPage() {
                                 <div className="border-b border-white/5 pb-5 mb-6">
                                     <h2 className="text-lg font-bold text-white tracking-tight">Active Keys</h2>
                                 </div>
-                                {isKeysLoading ? (
-                                    <div className="flex items-center justify-center py-12">
-                                        <Loader2 className="w-8 h-8 animate-spin text-violet-400" />
-                                    </div>
-                                ) : apiKeys.length === 0 ? (
-                                    <div className="text-center py-12">
-                                        <div className="w-16 h-16 rounded-full bg-white/5 flex items-center justify-center mx-auto mb-4">
-                                            <Key className="w-8 h-8 text-white/20" />
-                                        </div>
-                                        <p className="text-white font-medium">No API keys found</p>
-                                        <p className="text-sm text-white/40 mt-1 max-w-xs mx-auto">Generate a new key above to start making programmatic requests to our API.</p>
-                                    </div>
-                                ) : (
-                                    <div className="grid gap-3">
-                                        {apiKeys.map((key) => (
-                                            <motion.div 
-                                                layout
-                                                key={key.id} 
-                                                className={`flex items-center justify-between p-4 rounded-xl border transition-all group ${
-                                                    key.revoked_at 
-                                                        ? 'bg-red-500/[0.02] border-red-500/10 opacity-60' 
-                                                        : 'bg-white/[0.02] border-white/5 hover:bg-white/[0.04] hover:border-white/10'
-                                                }`}
-                                            >
-                                                <div className="flex items-center gap-4 min-w-0">
-                                                    <div className={`w-3 h-3 rounded-full flex-shrink-0 ${
-                                                        key.revoked_at ? 'bg-red-500/50' : 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.4)]'
-                                                    }`} />
-                                                    <div className="min-w-0">
-                                                        <div className="flex items-center gap-3">
-                                                            <span className={`font-semibold text-sm ${key.revoked_at ? 'text-white/50' : 'text-white'}`}>{key.label}</span>
-                                                            {key.revoked_at && (
-                                                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-500/10 text-red-400 border border-red-500/20 font-medium uppercase tracking-wider">Revoked</span>
-                                                            )}
-                                                        </div>
-                                                        <div className="flex items-center gap-4 mt-1.5">
-                                                            <code className="text-xs text-white/40 font-mono bg-white/5 px-1.5 py-0.5 rounded">{key.key_prefix}••••••••</code>
-                                                            <span className="text-xs text-white/30 truncate">
-                                                                Created {new Date(key.created_at).toLocaleDateString()}
-                                                            </span>
-                                                        </div>
-                                                    </div>
+                                {(() => {
+                                    if (isKeysLoading) {
+                                        return (
+                                            <div className="flex items-center justify-center py-12">
+                                                <Loader2 className="w-8 h-8 animate-spin text-violet-400" />
+                                            </div>
+                                        );
+                                    }
+
+                                    if (apiKeys.length === 0) {
+                                        return (
+                                            <div className="text-center py-12">
+                                                <div className="w-16 h-16 rounded-full bg-white/5 flex items-center justify-center mx-auto mb-4">
+                                                    <Key className="w-8 h-8 text-white/20" />
                                                 </div>
-                                                {!key.revoked_at && (
-                                                    <div className="flex items-center gap-2 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                        <Button size="sm" variant="ghost" onClick={() => handleCopyKey(key.key_prefix)} className="h-8 w-8 p-0 hover:bg-white/10 text-white/60 hover:text-white">
-                                                            <Copy className="w-3.5 h-3.5" />
-                                                        </Button>
-                                                        <Button size="sm" variant="ghost" onClick={() => handleRevokeKey(key.id, key.key_prefix)} className="h-8 w-8 p-0 hover:bg-red-500/20 text-white/60 hover:text-red-400">
-                                                            <Trash2 className="w-3.5 h-3.5" />
-                                                        </Button>
+                                                <p className="text-white font-medium">No API keys found</p>
+                                                <p className="text-sm text-white/40 mt-1 max-w-xs mx-auto">Generate a new key above to start making programmatic requests to our API.</p>
+                                            </div>
+                                        );
+                                    }
+
+                                    return (
+                                        <div className="grid gap-3">
+                                            {apiKeys.map((key) => (
+                                                <motion.div 
+                                                    layout
+                                                    key={key.id} 
+                                                    className={`flex items-center justify-between p-4 rounded-xl border transition-all group ${
+                                                        key.revoked_at 
+                                                            ? 'bg-red-500/[0.02] border-red-500/10 opacity-60' 
+                                                            : 'bg-white/[0.02] border-white/5 hover:bg-white/[0.04] hover:border-white/10'
+                                                    }`}
+                                                >
+                                                    <div className="flex items-center gap-4 min-w-0">
+                                                        <div className={`w-3 h-3 rounded-full flex-shrink-0 ${
+                                                            key.revoked_at ? 'bg-red-500/50' : 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.4)]'
+                                                        }`} />
+                                                        <div className="min-w-0">
+                                                            <div className="flex items-center gap-3">
+                                                                <span className={`font-semibold text-sm ${key.revoked_at ? 'text-white/50' : 'text-white'}`}>{key.label}</span>
+                                                                {key.revoked_at && (
+                                                                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-500/10 text-red-400 border border-red-500/20 font-medium uppercase tracking-wider">Revoked</span>
+                                                                )}
+                                                            </div>
+                                                            <div className="flex items-center gap-4 mt-1.5">
+                                                                <code className="text-xs text-white/40 font-mono bg-white/5 px-1.5 py-0.5 rounded">{key.key_prefix}••••••••</code>
+                                                                <span className="text-xs text-white/30 truncate">
+                                                                    Created {new Date(key.created_at).toLocaleDateString()}
+                                                                </span>
+                                                            </div>
+                                                        </div>
                                                     </div>
-                                                )}
-                                            </motion.div>
-                                        ))}
-                                    </div>
-                                )}
+                                                    {!key.revoked_at && (
+                                                        <div className="flex items-center gap-2 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                            <Button size="sm" variant="ghost" onClick={() => handleCopyKey(key.key_prefix)} className="h-8 w-8 p-0 hover:bg-white/10 text-white/60 hover:text-white">
+                                                                <Copy className="w-3.5 h-3.5" />
+                                                            </Button>
+                                                            <Button size="sm" variant="ghost" onClick={() => handleRevokeKey(key.id, key.key_prefix)} className="h-8 w-8 p-0 hover:bg-red-500/20 text-white/60 hover:text-red-400">
+                                                                <Trash2 className="w-3.5 h-3.5" />
+                                                            </Button>
+                                                        </div>
+                                                    )}
+                                                </motion.div>
+                                            ))}
+                                        </div>
+                                    );
+                                })()}
                             </SpotlightCard>
                         </motion.div>
                     )}
@@ -879,73 +886,81 @@ export default function SettingsPage() {
                                                 onClick={() => setBillingCycle('yearly')}
                                                 className={`relative z-10 px-6 py-2 text-sm font-medium transition-colors ${billingCycle === 'yearly' ? 'text-white' : 'text-white/40 hover:text-white/70'} flex items-center gap-2`}
                                             >
-                                                Yearly
+                                                <span>Yearly</span>
                                                 <span className="text-[9px] font-bold bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-500/20 uppercase">Save 20%</span>
                                             </button>
                                         </div>
                                     </div>
 
                                     {/* Plan Cards */}
-                                    {isPlansLoading ? (
-                                        <div className="flex items-center justify-center py-12">
-                                            <Loader2 className="w-8 h-8 animate-spin text-violet-400" />
-                                        </div>
-                                    ) : plans.length > 0 ? (
-                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                                            {plans.map((plan) => {
-                                                const isCurrent = subscription?.plan?.id === plan.id || (!subscription && plan.slug === 'free');
-                                                const isRecommended = plan.tier_level === 2;
-                                                const price = billingCycle === 'monthly' ? plan.price_monthly : plan.price_yearly;
-                                                
-                                                return (
-                                                    <div key={plan.id} className={`relative p-6 rounded-2xl border transition-all duration-300 group flex flex-col ${
-                                                        isCurrent 
-                                                            ? 'bg-gradient-to-br from-violet-600/10 to-blue-600/10 border-violet-500/30' 
-                                                            : 'bg-white/[0.02] border-white/5 hover:border-white/10 hover:bg-white/[0.04]'
-                                                    }`}>
-                                                        {isRecommended && (
-                                                            <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full text-[10px] font-bold bg-gradient-to-r from-violet-600 to-blue-600 text-white border border-white/10 shadow-lg shadow-violet-500/20 uppercase tracking-widest">
-                                                                Most Popular
-                                                            </div>
-                                                        )}
+                                    {(() => {
+                                        if (isPlansLoading) {
+                                            return (
+                                                <div className="flex items-center justify-center py-12">
+                                                    <Loader2 className="w-8 h-8 animate-spin text-violet-400" />
+                                                </div>
+                                            );
+                                        }
+
+                                        if (plans.length > 0) {
+                                            return (
+                                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                                    {plans.map((plan) => {
+                                                        const isCurrent = subscription?.plan?.id === plan.id || (!subscription && plan.slug === 'free');
+                                                        const isRecommended = plan.tier_level === 2;
+                                                        const price = billingCycle === 'monthly' ? plan.price_monthly : plan.price_yearly;
                                                         
-                                                        <div className="mb-4">
-                                                            <h3 className="text-lg font-bold text-white mb-1">{plan.name}</h3>
-                                                            <div className="flex items-baseline gap-1">
-                                                                <span className="text-3xl font-bold text-white tracking-tight">{formatPrice(price, plan.currency)}</span>
-                                                                {price > 0 && <span className="text-sm text-white/40 font-medium">/{billingCycle === 'monthly' ? 'mo' : 'yr'}</span>}
-                                                            </div>
-                                                        </div>
-
-                                                        <ul className="space-y-3 mb-8 flex-1">
-                                                            {getPlanFeatures(plan).map((feature, i) => (
-                                                                <li key={i} className="flex items-start gap-3 text-sm text-white/60">
-                                                                    <div className="mt-0.5 p-0.5 rounded-full bg-emerald-500/20 text-emerald-400 flex-shrink-0">
-                                                                        <Check className="w-2.5 h-2.5" />
+                                                        return (
+                                                            <div key={plan.id} className={`relative p-6 rounded-2xl border transition-all duration-300 group flex flex-col ${
+                                                                isCurrent 
+                                                                    ? 'bg-gradient-to-br from-violet-600/10 to-blue-600/10 border-violet-500/30' 
+                                                                    : 'bg-white/[0.02] border-white/5 hover:border-white/10 hover:bg-white/[0.04]'
+                                                            }`}>
+                                                                {isRecommended && (
+                                                                    <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full text-[10px] font-bold bg-gradient-to-r from-violet-600 to-blue-600 text-white border border-white/10 shadow-lg shadow-violet-500/20 uppercase tracking-widest">
+                                                                        Most Popular
                                                                     </div>
-                                                                    <span className="leading-tight">{feature}</span>
-                                                                </li>
-                                                            ))}
-                                                        </ul>
+                                                                )}
+                                                                
+                                                                <div className="mb-4">
+                                                                    <h3 className="text-lg font-bold text-white mb-1">{plan.name}</h3>
+                                                                    <div className="flex items-baseline gap-1">
+                                                                        <span className="text-3xl font-bold text-white tracking-tight">{formatPrice(price, plan.currency)}</span>
+                                                                        {price > 0 && <span className="text-sm text-white/40 font-medium">/{billingCycle === 'monthly' ? 'mo' : 'yr'}</span>}
+                                                                    </div>
+                                                                </div>
 
-                                                        <Button
-                                                            onClick={isCurrent ? undefined : () => handleUpgradeClick(plan.id)}
-                                                            disabled={isCurrent}
-                                                            className={`w-full ${
-                                                                isCurrent
-                                                                    ? 'bg-white/5 text-white/40 cursor-default border border-white/5'
-                                                                    : 'bg-white/10 hover:bg-white/20 text-white border border-white/10 hover:border-white/20'
-                                                            }`}
-                                                        >
-                                                            {isCurrent ? 'Current Plan' : 'Upgrade'}
-                                                        </Button>
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                    ) : (
-                                        <div className="text-center py-12 text-white/40">No plans available.</div>
-                                    )}
+                                                                <ul className="space-y-3 mb-8 flex-1">
+                                                                    {getPlanFeatures(plan).map((feature) => (
+                                                                        <li key={feature} className="flex items-start gap-3 text-sm text-white/60">
+                                                                            <div className="mt-0.5 p-0.5 rounded-full bg-emerald-500/20 text-emerald-400 flex-shrink-0">
+                                                                                <Check className="w-2.5 h-2.5" />
+                                                                            </div>
+                                                                            <span className="leading-tight">{feature}</span>
+                                                                        </li>
+                                                                    ))}
+                                                                </ul>
+
+                                                                <Button
+                                                                    onClick={isCurrent ? undefined : () => handleUpgradeClick(plan.id)}
+                                                                    disabled={isCurrent}
+                                                                    className={`w-full ${
+                                                                        isCurrent
+                                                                            ? 'bg-white/5 text-white/40 cursor-default border border-white/5'
+                                                                            : 'bg-white/10 hover:bg-white/20 text-white border border-white/10 hover:border-white/20'
+                                                                    }`}
+                                                                >
+                                                                    {isCurrent ? 'Current Plan' : 'Upgrade'}
+                                                                </Button>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            );
+                                        }
+
+                                        return <div className="text-center py-12 text-white/40">No plans available.</div>;
+                                    })()}
                                 </div>
                             </SpotlightCard>
                         </motion.div>

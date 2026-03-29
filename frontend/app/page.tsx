@@ -44,7 +44,7 @@ function Counter({ target, suffix = '' }: { target: number; suffix?: string }) {
 function CliBlock() {
     const [copied, setCopied] = useState(false);
     const cmd = 'npx create-voxly@latest my-agency';
-    const copy = async () => { try { await navigator.clipboard.writeText(cmd); } catch { const ta = document.createElement('textarea'); ta.value = cmd; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); } setCopied(true); setTimeout(() => setCopied(false), 2000); };
+    const copy = async () => { try { await navigator.clipboard.writeText(cmd); } catch { const ta = document.createElement('textarea'); ta.value = cmd; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); } setCopied(true); setTimeout(() => setCopied(false), 2000); };
     return (
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.6, duration: 0.5, ease: [0.22, 1, 0.36, 1] as const }}
             className="inline-flex items-center gap-3 px-5 py-3 rounded-xl bg-white/[0.04] border border-white/[0.08] backdrop-blur-sm cursor-pointer group hover:border-violet-500/30 transition-colors"
@@ -323,7 +323,7 @@ export default function HomePage() {
                         <p className="text-xs text-white/30">Built with <span className="text-rose-400">❤️</span> and <span className="gradient-text">AI</span></p>
                         <div className="flex items-center gap-6">
                             <a href="https://github.com/ravin972/voxly" target="_blank" rel="noreferrer" className="text-white/20 hover:text-white transition-colors"><Github className="w-5 h-5" /></a>
-                            <a href="#" className="text-white/20 hover:text-white transition-colors"><Globe className="w-5 h-5" /></a>
+                            <button type="button" className="text-white/20 hover:text-white transition-colors"><Globe className="w-5 h-5" /></button>
                         </div>
                     </div>
 

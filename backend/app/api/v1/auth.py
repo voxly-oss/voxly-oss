@@ -34,6 +34,8 @@ from app.rate_limit import limiter
 from app.services.email_service import send_password_reset_email
 router = APIRouter()
 OAUTH_STATE_COOKIE_PREFIX = "voxly_oauth_state_"
+USER_ACCOUNT_DEACTIVATED = "User account is deactivated"
+APPLICATION_JSON = "application/json"
 
 
 def _get_oauth_cookie_name(provider: str) -> str:
@@ -59,9 +61,9 @@ class GoogleAuthResponse(BaseModel):
 
 
 @router.post("/google", response_model=GoogleAuthResponse)
-async def google_auth(
+async def google_auth(*, 
     request: GoogleAuthRequest,
-    db: Session = Depends(get_db),
+    db: Annotated[Session , Depends(get_db)],
 ):
     """Authenticate with Google token (access token or ID token). Creates account if new user."""
     if not settings.GOOGLE_CLIENT_ID:
@@ -144,7 +146,7 @@ async def google_auth(
     if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="User account is deactivated",
+            detail=USER_ACCOUNT_DEACTIVATED,
         )
 
     # Create JWT
@@ -163,7 +165,7 @@ async def google_auth(
 # ── GitHub OAuth ──
 
 @router.get("/github")
-async def github_redirect(request: Request):
+async def github_redirect(*, request: Request):
     """Redirect user to GitHub OAuth authorization page."""
     if not settings.GITHUB_OAUTH_CLIENT_ID:
         raise HTTPException(
@@ -189,12 +191,19 @@ async def github_redirect(request: Request):
     return response
 
 
-@router.post("/github/callback")
-async def github_callback(
+@router.post(
+    "/github/callback",
+    responses={
+        400: {"description": "No verified email found on GitHub account"},
+        401: {"description": "GitHub authentication failed"},
+        403: {"description": USER_ACCOUNT_DEACTIVATED},
+    },
+)
+async def github_callback(*, 
     request: Request,
     code: str,
     state: str,
-    db: Session = Depends(get_db),
+    db: Annotated[Session , Depends(get_db)],
 ):
     """Exchange GitHub authorization code for user token."""
     if not settings.GITHUB_OAUTH_CLIENT_ID or not settings.GITHUB_OAUTH_CLIENT_SECRET:
@@ -218,7 +227,7 @@ async def github_callback(
                 "client_secret": settings.GITHUB_OAUTH_CLIENT_SECRET,
                 "code": code,
             },
-            headers={"Accept": "application/json"},
+            headers={"Accept": APPLICATION_JSON},
         )
         if token_resp.status_code != 200:
             raise HTTPException(status_code=401, detail="Failed to exchange GitHub code")
@@ -230,14 +239,14 @@ async def github_callback(
         # Fetch user info
         user_resp = await client.get(
             "https://api.github.com/user",
-            headers={"Authorization": f"Bearer {gh_access_token}", "Accept": "application/json"},
+            headers={"Authorization": f"Bearer {gh_access_token}", "Accept": APPLICATION_JSON},
         )
         gh_user = user_resp.json()
 
         # Fetch primary email (may be private)
         email_resp = await client.get(
             "https://api.github.com/user/emails",
-            headers={"Authorization": f"Bearer {gh_access_token}", "Accept": "application/json"},
+            headers={"Authorization": f"Bearer {gh_access_token}", "Accept": APPLICATION_JSON},
         )
         emails = email_resp.json()
         primary_email = next(
@@ -272,7 +281,7 @@ async def github_callback(
             is_new_user = True
 
     if not user.is_active:
-        raise HTTPException(status_code=403, detail="User account is deactivated")
+        raise HTTPException(status_code=403, detail=USER_ACCOUNT_DEACTIVATED)
 
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
@@ -289,10 +298,10 @@ async def github_callback(
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 @limiter.limit("5/minute")
-async def register(
+async def register(*, 
     request: Request,
     user_data: UserCreate,
-    db: Session = Depends(get_db)
+    db: Annotated[Session , Depends(get_db)]
 ):
     """Register a new user."""
     # Check if email already exists
@@ -329,10 +338,10 @@ async def register(
 
 @router.post("/login", response_model=Token)
 @limiter.limit("10/minute")
-async def login(
+async def login(*, 
     request: Request,
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
-    db: Session = Depends(get_db)
+    db: Annotated[Session , Depends(get_db)]
 ):
     """Authenticate user and return JWT token."""
     # Find user by email (username field contains email)
@@ -348,7 +357,7 @@ async def login(
     if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="User account is deactivated"
+            detail=USER_ACCOUNT_DEACTIVATED
         )
     
     # Create access token
@@ -362,8 +371,8 @@ async def login(
 
 
 @router.post("/refresh", response_model=Token)
-async def refresh_token(
-    current_user: User = Depends(get_current_user)
+async def refresh_token(*, 
+    current_user: Annotated[User , Depends(get_current_user)]
 ):
     """Refresh the access token."""
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -376,8 +385,8 @@ async def refresh_token(
 
 
 @router.get("/me", response_model=UserResponse)
-async def get_me(
-    current_user: User = Depends(get_current_user)
+async def get_me(*, 
+    current_user: Annotated[User , Depends(get_current_user)]
 ):
     """Get current authenticated user profile."""
     return current_user
@@ -428,10 +437,10 @@ class _PasswordChange(_BaseModel):
 
 
 @router.put("/profile", response_model=UserResponse)
-async def update_profile(
+async def update_profile(*, 
     profile_data: _ProfileUpdate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db: Annotated[Session , Depends(get_db)],
+    current_user: Annotated[User , Depends(get_current_user)]
 ):
     """Update the current user's profile (name, agency, phone)."""
     update_fields = profile_data.model_dump(exclude_unset=True)
@@ -462,10 +471,10 @@ async def update_profile(
 
 
 @router.post("/change-password", status_code=status.HTTP_200_OK)
-async def change_password(
+async def change_password(*, 
     password_data: _PasswordChange,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db: Annotated[Session , Depends(get_db)],
+    current_user: Annotated[User , Depends(get_current_user)]
 ):
     """Change the current user's password. Requires old password verification."""
     # Verify current password — constant-time comparison via bcrypt
@@ -498,11 +507,11 @@ async def change_password(
 
 @router.post("/password-reset/request", status_code=status.HTTP_200_OK)
 @limiter.limit("3/minute")
-async def request_password_reset(
+async def request_password_reset(*, 
     request: Request,
     request_data: PasswordResetRequest,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db)
+    db: Annotated[Session , Depends(get_db)]
 ):
     """
     Request a password reset. 
@@ -529,9 +538,9 @@ async def request_password_reset(
 
 
 @router.post("/password-reset/confirm", status_code=status.HTTP_200_OK)
-async def confirm_password_reset(
+async def confirm_password_reset(*, 
     confirm_data: PasswordResetConfirm,
-    db: Session = Depends(get_db)
+    db: Annotated[Session , Depends(get_db)]
 ):
     """Validate token and update password."""
     email = verify_reset_token(confirm_data.token)
@@ -564,10 +573,10 @@ async def confirm_password_reset(
 
 @router.get("/me/export", response_model=dict, status_code=status.HTTP_200_OK)
 @limiter.limit("5/minute")
-async def export_user_data(
+async def export_user_data(*, 
     request: Request,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    current_user: Annotated[User , Depends(get_current_user)],
+    db: Annotated[Session , Depends(get_db)]
 ):
     """GDPR Endpoint: Export all user data as JSON."""
     from app.models.client import Client
@@ -623,10 +632,10 @@ async def export_user_data(
 
 @router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
 @limiter.limit("2/minute")
-async def delete_user_account(
+async def delete_user_account(*, 
     request: Request,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    current_user: Annotated[User , Depends(get_current_user)],
+    db: Annotated[Session , Depends(get_db)]
 ):
     """GDPR Endpoint: Permanently and fully erase a user account."""
     try:

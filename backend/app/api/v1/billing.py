@@ -6,7 +6,7 @@ Supports dual gateways: Stripe (international) and Razorpay (India).
 """
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import Annotated, Optional
 
 from app.database import get_db
 from app.models.user import User
@@ -33,7 +33,7 @@ router = APIRouter()
 
 
 @router.get("/plans", response_model=PlanListResponse)
-async def list_plans(db: Session = Depends(get_db)):
+async def list_plans(*, db: Annotated[Session , Depends(get_db)]):
     """List all available subscription plans."""
     plans = db.query(Plan).filter(Plan.is_active == True).order_by(Plan.tier_level).all()
     return PlanListResponse(
@@ -43,10 +43,10 @@ async def list_plans(db: Session = Depends(get_db)):
 
 @router.get("/subscription", response_model=Optional[SubscriptionResponse])
 @limiter.limit("20/minute")
-async def get_subscription(
+async def get_subscription(*, 
     request: Request,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db: Annotated[Session , Depends(get_db)],
+    current_user: Annotated[User , Depends(get_current_user)]
 ):
     """Get the current user's active subscription."""
     subscription = db.query(Subscription).filter(
@@ -60,13 +60,21 @@ async def get_subscription(
     return SubscriptionResponse.model_validate(subscription)
 
 
-@router.post("/checkout", response_model=CheckoutSessionResponse)
+@router.post(
+    "/checkout",
+    response_model=CheckoutSessionResponse,
+    responses={
+        400: {"description": "Invalid payment request"},
+        404: {"description": "Plan not found"},
+        500: {"description": "Failed to create checkout session"},
+    },
+)
 @limiter.limit("5/minute")
-async def create_checkout_session(
+async def create_checkout_session(*, 
     request: Request,
     payload: CheckoutSessionRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db: Annotated[Session , Depends(get_db)],
+    current_user: Annotated[User , Depends(get_current_user)]
 ):
     """Create a checkout session for Stripe or Razorpay."""
     
@@ -82,7 +90,7 @@ async def create_checkout_session(
     if payload.payment_gateway == "stripe":
         return await _create_stripe_checkout(current_user, plan, price, payload)
     elif payload.payment_gateway == "razorpay":
-        return await _create_razorpay_checkout(current_user, plan, price, payload)
+        return await _create_razorpay_checkout(current_user, plan, price)
     else:
         raise HTTPException(status_code=400, detail="Invalid payment gateway")
 
@@ -131,7 +139,7 @@ async def _create_stripe_checkout(user, plan, price, payload):
         raise HTTPException(status_code=500, detail="Failed to create checkout session")
 
 
-async def _create_razorpay_checkout(user, plan, price, payload):
+async def _create_razorpay_checkout(user, plan, price):
     """Create a Razorpay order."""
     try:
         import razorpay
@@ -162,8 +170,91 @@ async def _create_razorpay_checkout(user, plan, price, payload):
         raise HTTPException(status_code=500, detail="Failed to create payment order")
 
 
-@router.post("/webhook/stripe")
-async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
+def _handle_stripe_checkout_completed(db: Session, session: dict) -> None:
+    user_id = session["metadata"]["user_id"]
+    plan_id = session["metadata"]["plan_id"]
+    subscription = db.query(Subscription).filter(Subscription.user_id == user_id).first()
+
+    if subscription:
+        subscription.plan_id = plan_id
+        subscription.status = "active"
+        subscription.payment_gateway = "stripe"
+        subscription.gateway_subscription_id = session.get("subscription")
+        subscription.gateway_customer_id = session.get("customer")
+    else:
+        subscription = Subscription(
+            user_id=user_id,
+            plan_id=plan_id,
+            status="active",
+            payment_gateway="stripe",
+            gateway_subscription_id=session.get("subscription"),
+            gateway_customer_id=session.get("customer"),
+        )
+        db.add(subscription)
+
+    plan = db.query(Plan).filter(Plan.id == plan_id).first()
+    if plan:
+        user = db.query(User).filter(User.id == user_id).first()
+        if user:
+            user.subscription_tier = plan.slug
+
+    db.commit()
+    logger.info(f"Stripe subscription activated for user {user_id}")
+
+
+def _handle_stripe_subscription_deleted(db: Session, sub_data: dict) -> None:
+    subscription = db.query(Subscription).filter(
+        Subscription.gateway_subscription_id == sub_data["id"]
+    ).first()
+    if not subscription:
+        return
+
+    subscription.status = "cancelled"
+    user = db.query(User).filter(User.id == subscription.user_id).first()
+    if user:
+        user.subscription_tier = "free"
+    db.commit()
+    logger.info(f"Subscription cancelled for user {subscription.user_id}")
+
+
+def _handle_razorpay_payment_captured(db: Session, payment: dict) -> None:
+    notes = payment.get("notes", {})
+    user_id = notes.get("user_id")
+    plan_id = notes.get("plan_id")
+    if not user_id or not plan_id:
+        return
+
+    subscription = db.query(Subscription).filter(Subscription.user_id == user_id).first()
+    if subscription:
+        subscription.plan_id = plan_id
+        subscription.status = "active"
+        subscription.payment_gateway = "razorpay"
+        subscription.gateway_subscription_id = payment.get("id")
+    else:
+        subscription = Subscription(
+            user_id=user_id,
+            plan_id=plan_id,
+            status="active",
+            payment_gateway="razorpay",
+            gateway_subscription_id=payment.get("id"),
+        )
+        db.add(subscription)
+
+    plan = db.query(Plan).filter(Plan.id == plan_id).first()
+    if plan:
+        user = db.query(User).filter(User.id == user_id).first()
+        if user:
+            user.subscription_tier = plan.slug
+
+    db.commit()
+    logger.info(f"Razorpay payment captured for user {user_id}")
+
+
+@router.post(
+    "/webhook/stripe",
+    responses={400: {"description": "Invalid signature"}},
+)
+async def stripe_webhook(*, request: Request, db: Annotated[Session , Depends(get_db)]):
     """Handle Stripe webhook events (subscription created, updated, cancelled)."""
     import stripe
     stripe.api_key = settings.STRIPE_SECRET_KEY
@@ -180,61 +271,18 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Invalid signature")
     
     if event["type"] == "checkout.session.completed":
-        session = event["data"]["object"]
-        user_id = session["metadata"]["user_id"]
-        plan_id = session["metadata"]["plan_id"]
-        
-        # Create or update subscription
-        subscription = db.query(Subscription).filter(
-            Subscription.user_id == user_id
-        ).first()
-        
-        if subscription:
-            subscription.plan_id = plan_id
-            subscription.status = "active"
-            subscription.payment_gateway = "stripe"
-            subscription.gateway_subscription_id = session.get("subscription")
-            subscription.gateway_customer_id = session.get("customer")
-        else:
-            subscription = Subscription(
-                user_id=user_id,
-                plan_id=plan_id,
-                status="active",
-                payment_gateway="stripe",
-                gateway_subscription_id=session.get("subscription"),
-                gateway_customer_id=session.get("customer")
-            )
-            db.add(subscription)
-        
-        # Update user tier
-        plan = db.query(Plan).filter(Plan.id == plan_id).first()
-        if plan:
-            user = db.query(User).filter(User.id == user_id).first()
-            if user:
-                user.subscription_tier = plan.slug
-        
-        db.commit()
-        logger.info(f"Stripe subscription activated for user {user_id}")
-    
+        _handle_stripe_checkout_completed(db, event["data"]["object"])
     elif event["type"] == "customer.subscription.deleted":
-        sub_data = event["data"]["object"]
-        subscription = db.query(Subscription).filter(
-            Subscription.gateway_subscription_id == sub_data["id"]
-        ).first()
-        
-        if subscription:
-            subscription.status = "cancelled"
-            user = db.query(User).filter(User.id == subscription.user_id).first()
-            if user:
-                user.subscription_tier = "free"
-            db.commit()
-            logger.info(f"Subscription cancelled for user {subscription.user_id}")
+        _handle_stripe_subscription_deleted(db, event["data"]["object"])
     
     return {"status": "ok"}
 
 
-@router.post("/webhook/razorpay")
-async def razorpay_webhook(request: Request, db: Session = Depends(get_db)):
+@router.post(
+    "/webhook/razorpay",
+    responses={400: {"description": "Invalid signature"}},
+)
+async def razorpay_webhook(*, request: Request, db: Annotated[Session , Depends(get_db)]):
     """Handle Razorpay webhook events."""
     import razorpay
     
@@ -255,49 +303,17 @@ async def razorpay_webhook(request: Request, db: Session = Depends(get_db)):
     event = payload.get("event")
     
     if event == "payment.captured":
-        payment = payload["payload"]["payment"]["entity"]
-        notes = payment.get("notes", {})
-        user_id = notes.get("user_id")
-        plan_id = notes.get("plan_id")
-        
-        if user_id and plan_id:
-            subscription = db.query(Subscription).filter(
-                Subscription.user_id == user_id
-            ).first()
-            
-            if subscription:
-                subscription.plan_id = plan_id
-                subscription.status = "active"
-                subscription.payment_gateway = "razorpay"
-                subscription.gateway_subscription_id = payment.get("id")
-            else:
-                subscription = Subscription(
-                    user_id=user_id,
-                    plan_id=plan_id,
-                    status="active",
-                    payment_gateway="razorpay",
-                    gateway_subscription_id=payment.get("id")
-                )
-                db.add(subscription)
-            
-            plan = db.query(Plan).filter(Plan.id == plan_id).first()
-            if plan:
-                user = db.query(User).filter(User.id == user_id).first()
-                if user:
-                    user.subscription_tier = plan.slug
-            
-            db.commit()
-            logger.info(f"Razorpay payment captured for user {user_id}")
+        _handle_razorpay_payment_captured(db, payload["payload"]["payment"]["entity"])
     
     return {"status": "ok"}
 
 
 @router.get("/usage", response_model=UsageStatsResponse)
 @limiter.limit("20/minute")
-async def get_usage_stats(
+async def get_usage_stats(*, 
     request: Request,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db: Annotated[Session , Depends(get_db)],
+    current_user: Annotated[User , Depends(get_current_user)]
 ):
     """Get current usage statistics for the user."""
     from app.models.api_key import APIKey
@@ -357,12 +373,18 @@ async def get_usage_stats(
     )
 
 
-@router.post("/portal")
+@router.post(
+    "/portal",
+    responses={
+        400: {"description": "No Stripe subscription found. Use the dashboard to manage billing."},
+        500: {"description": "Failed to create billing portal"},
+    },
+)
 @limiter.limit("5/minute")
-async def create_billing_portal(
+async def create_billing_portal(*, 
     request: Request,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db: Annotated[Session , Depends(get_db)],
+    current_user: Annotated[User , Depends(get_current_user)]
 ):
     """Create a Stripe customer portal session for managing billing."""
     subscription = db.query(Subscription).filter(

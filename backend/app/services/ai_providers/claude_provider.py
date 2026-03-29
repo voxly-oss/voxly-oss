@@ -82,9 +82,9 @@ class ClaudeProvider(AIProvider):
             
             return AIResponse(
                 response=(
-                    f"Hi! I'm having trouble checking your project status "
-                    f"right now. Please contact your project manager directly "
-                    f"or try again in a few minutes. 🙏"
+                    "Hi! I'm having trouble checking your project status "
+                    "right now. Please contact your project manager directly "
+                    "or try again in a few minutes. 🙏"
                 ),
                 tokens_used=0,
                 model="error",

@@ -3,7 +3,7 @@ from app.database import SessionLocal
 from app.models.project import Project
 from app.models.github_cache import GitHubCache
 from app.services.github_service import fetch_github_stats
-from datetime import datetime
+from datetime import datetime, timezone
 import asyncio
 import logging
 
@@ -75,7 +75,7 @@ def sync_single_repo(self, project_id: str, repo_name: str):
             if stats.get("last_commit_date"):
                 cache.last_commit_date = datetime.fromisoformat(stats["last_commit_date"])
             
-            cache.synced_at = datetime.utcnow()
+            cache.synced_at = datetime.now(timezone.utc)
             
             logger.info(f"Updated GitHub cache for project {project_id}")
         else:

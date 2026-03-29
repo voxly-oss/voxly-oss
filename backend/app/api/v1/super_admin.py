@@ -9,7 +9,7 @@ This router is intentionally NOT exposed in API docs (include_in_schema=False on
 """
 import secrets
 from datetime import timedelta
-from typing import List, Optional
+from typing import Annotated, List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Header, status
@@ -31,13 +31,14 @@ import logging
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+USER_NOT_FOUND = "User not found"
 
 
 # ─── Auth Guard ──────────────────────────────────────────────────────────────
 
 def require_super_admin(
     x_admin_secret: Optional[str] = Header(None, alias="X-Admin-Secret"),
-    current_user: User = Depends(get_current_user),
+    current_user: Annotated[User , Depends(get_current_user)],
 ) -> User:
     """
     Dual-factor super admin guard:
@@ -69,11 +70,11 @@ def require_super_admin(
 class TenantSummary(BaseModel):
     id: str
     email: str
-    full_name: Optional[str]
-    agency_name: Optional[str]
+    full_name: Optional[str] = None
+    agency_name: Optional[str] = None
     is_active: bool
     subscription_tier: str
-    plan_name: Optional[str]
+    plan_name: Optional[str] = None
     client_count: int
     project_count: int
     message_count: int
@@ -105,11 +106,11 @@ class ImpersonateResponse(BaseModel):
 # ─── Endpoints ───────────────────────────────────────────────────────────────
 
 @router.get("/tenants", response_model=List[TenantSummary], include_in_schema=False)
-async def list_all_tenants(
+async def list_all_tenants(*, 
     skip: int = 0,
     limit: int = 100,
-    db: Session = Depends(get_db),
-    _: User = Depends(require_super_admin),
+    db: Annotated[Session , Depends(get_db)],
+    _: Annotated[User , Depends(require_super_admin)],
 ):
     """List all tenants (agency owners) with usage stats."""
     users = db.query(User).order_by(User.created_at.desc()).offset(skip).limit(limit).all()
@@ -154,9 +155,9 @@ async def list_all_tenants(
 
 
 @router.get("/stats", response_model=SystemStats, include_in_schema=False)
-async def get_system_stats(
-    db: Session = Depends(get_db),
-    _: User = Depends(require_super_admin),
+async def get_system_stats(*, 
+    db: Annotated[Session , Depends(get_db)],
+    _: Annotated[User , Depends(require_super_admin)],
 ):
     """Get aggregate platform-wide statistics."""
     total_tenants = db.query(func.count(User.id)).scalar() or 0
@@ -176,17 +177,21 @@ async def get_system_stats(
     )
 
 
-@router.patch("/users/{user_id}/plan", include_in_schema=False)
-async def override_user_plan(
+@router.patch(
+    "/users/{user_id}/plan",
+    include_in_schema=False,
+    responses={404: {"description": USER_NOT_FOUND}},
+)
+async def override_user_plan(*, 
     user_id: UUID,
     payload: PlanOverrideRequest,
-    db: Session = Depends(get_db),
-    _: User = Depends(require_super_admin),
+    db: Annotated[Session , Depends(get_db)],
+    _: Annotated[User , Depends(require_super_admin)],
 ):
     """Override a tenant's subscription tier (manual plan change without payment)."""
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(status_code=404, detail=USER_NOT_FOUND)
 
     old_tier = user.subscription_tier
     user.subscription_tier = payload.subscription_tier
@@ -196,16 +201,23 @@ async def override_user_plan(
     return {"message": f"Plan updated: {old_tier} → {payload.subscription_tier}", "user": user.email}
 
 
-@router.patch("/users/{user_id}/disable", include_in_schema=False)
-async def toggle_user_active(
+@router.patch(
+    "/users/{user_id}/disable",
+    include_in_schema=False,
+    responses={
+        400: {"description": "Cannot disable your own account"},
+        404: {"description": USER_NOT_FOUND},
+    },
+)
+async def toggle_user_active(*, 
     user_id: UUID,
-    db: Session = Depends(get_db),
-    admin: User = Depends(require_super_admin),
+    db: Annotated[Session , Depends(get_db)],
+    admin: Annotated[User , Depends(require_super_admin)],
 ):
     """Toggle a tenant's active status (kill switch — disables login and AI responses)."""
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(status_code=404, detail=USER_NOT_FOUND)
     if str(user.id) == str(admin.id):
         raise HTTPException(status_code=400, detail="Cannot disable your own account")
 
@@ -217,11 +229,19 @@ async def toggle_user_active(
     return {"message": f"Account {action}", "user": user.email, "is_active": user.is_active}
 
 
-@router.post("/impersonate/{user_id}", response_model=ImpersonateResponse, include_in_schema=False)
-async def impersonate_user(
+@router.post(
+    "/impersonate/{user_id}",
+    response_model=ImpersonateResponse,
+    include_in_schema=False,
+    responses={
+        400: {"description": "Cannot impersonate yourself"},
+        404: {"description": USER_NOT_FOUND},
+    },
+)
+async def impersonate_user(*, 
     user_id: UUID,
-    db: Session = Depends(get_db),
-    admin: User = Depends(require_super_admin),
+    db: Annotated[Session , Depends(get_db)],
+    admin: Annotated[User , Depends(require_super_admin)],
 ):
     """
     Generate a short-lived JWT for another user (for debugging their account).
@@ -229,7 +249,7 @@ async def impersonate_user(
     """
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(status_code=404, detail=USER_NOT_FOUND)
     if str(user.id) == str(admin.id):
         raise HTTPException(status_code=400, detail="Cannot impersonate yourself")
 

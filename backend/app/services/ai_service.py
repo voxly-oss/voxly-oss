@@ -82,7 +82,7 @@ async def generate_client_response(
         )
         
         if not result["success"]:
-            raise Exception(result.get("error"))
+            raise RuntimeError(result.get("error") or "AI response generation failed")
             
         logger.info(
             f"VoxlyAgent success. Steps: {result.get('steps')}, "

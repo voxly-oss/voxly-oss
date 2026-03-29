@@ -1,6 +1,6 @@
 from github import Github, GithubException
 from app.config import get_settings
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict
 import logging
 import asyncio
@@ -9,6 +9,10 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 github_client = Github(settings.GITHUB_TOKEN)
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 async def fetch_github_stats(repo_name: str) -> Dict:
@@ -58,7 +62,7 @@ async def fetch_github_stats(repo_name: str) -> Dict:
             "pull_requests": pull_requests,
             "last_commit_message": last_commit_message,
             "last_commit_date": last_commit_date.isoformat() if last_commit_date else None,
-            "synced_at": datetime.utcnow().isoformat(),
+            "synced_at": _utc_now().isoformat(),
             "error": None,
         }
 
@@ -76,7 +80,7 @@ async def fetch_github_stats(repo_name: str) -> Dict:
             "pull_requests": 0,
             "last_commit_message": None,
             "last_commit_date": None,
-            "synced_at": datetime.utcnow().isoformat()
+            "synced_at": _utc_now().isoformat()
         }
     except Exception as e:
         logger.error(f"Unexpected error fetching GitHub stats for {repo_name}: {e}")
@@ -90,5 +94,5 @@ async def fetch_github_stats(repo_name: str) -> Dict:
             "pull_requests": 0,
             "last_commit_message": None,
             "last_commit_date": None,
-            "synced_at": datetime.utcnow().isoformat()
+            "synced_at": _utc_now().isoformat()
         }

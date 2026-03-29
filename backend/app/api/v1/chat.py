@@ -14,7 +14,7 @@ from app.websockets.manager import manager
 from app.rate_limit import limiter
 from app.config import settings
 from pydantic import BaseModel, ConfigDict
-from typing import Optional
+from typing import Annotated, Optional
 import secrets
 import logging
 import json
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 @router.websocket("/ws")
-async def websocket_endpoint(
+async def websocket_endpoint(*, 
     websocket: WebSocket,
     token: str = Query(...),
 ):
@@ -76,12 +76,15 @@ async def websocket_endpoint(
             await websocket.close()
         except Exception:
             pass
-@router.get("/history/{client_id}")
-async def get_chat_history(
+@router.get(
+    "/history/{client_id}",
+    responses={404: {"description": "Client not found"}},
+)
+async def get_chat_history(*, 
     client_id: str,
     limit: int = 50,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db: Annotated[Session , Depends(get_db)],
+    current_user: Annotated[User , Depends(get_current_user)]
 ):
     """
     Get chat history for a specific client.
@@ -124,11 +127,11 @@ async def get_chat_history(
 
 
 @router.get("/messages")
-async def get_all_messages(
+async def get_all_messages(*, 
     skip: int = 0,
     limit: int = 50,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db: Annotated[Session , Depends(get_db)],
+    current_user: Annotated[User , Depends(get_current_user)]
 ):
     """
     Get all chat messages across all of the user's clients.

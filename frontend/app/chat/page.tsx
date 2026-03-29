@@ -9,6 +9,7 @@ import { Bot, User, Send, Sparkles, ChevronDown } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 
 interface Message {
+    id: string;
     role: 'user' | 'ai';
     content: string;
 }
@@ -16,6 +17,24 @@ interface Message {
 interface Project {
     id: string;
     name: string;
+}
+
+function MarkdownCode({ inline, children, ...props }: any) {
+    return inline
+        ? <code className="bg-black/30 px-1 py-0.5 rounded text-violet-200 font-mono text-xs" {...props}>{children}</code>
+        : <div className="bg-black/30 p-2 rounded-md my-2 overflow-x-auto"><code className="text-xs font-mono text-gray-300" {...props}>{children}</code></div>;
+}
+
+function MarkdownParagraph({ children }: any) {
+    return <p className="mb-2 last:mb-0">{children}</p>;
+}
+
+function MarkdownUnorderedList({ children }: any) {
+    return <ul className="list-disc pl-4 mb-2 space-y-1">{children}</ul>;
+}
+
+function MarkdownOrderedList({ children }: any) {
+    return <ol className="list-decimal pl-4 mb-2 space-y-1">{children}</ol>;
 }
 
 export default function ChatPage() {
@@ -64,7 +83,7 @@ export default function ChatPage() {
 
         const userMsg = input;
         setInput('');
-        setMessages(prev => [...prev, { role: 'user', content: userMsg }]);
+        setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'user', content: userMsg }]);
         setLoading(true);
 
         try {
@@ -83,9 +102,13 @@ export default function ChatPage() {
             if (!res.ok) throw new Error('Failed to fetch');
             
             const data = await res.json();
-            setMessages(prev => [...prev, { role: 'ai', content: data.response }]);
+            setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'ai', content: data.response }]);
         } catch (error) {
-            setMessages(prev => [...prev, { role: 'ai', content: "Error: I couldn't reach the server. Please check if the Backend is running." }]);
+            setMessages(prev => [...prev, {
+                id: crypto.randomUUID(),
+                role: 'ai',
+                content: "Error: I couldn't reach the server. Please check if the Backend is running.",
+            }]);
             console.error(error);
         } finally {
             setLoading(false);
@@ -143,8 +166,8 @@ export default function ChatPage() {
                         </div>
                     )}
                     
-                    {messages.map((msg, i) => (
-                        <div key={i} className={`flex gap-3 ${msg.role === 'ai' ? 'justify-start' : 'justify-end'}`}>
+                    {messages.map((msg) => (
+                        <div key={msg.id} className={`flex gap-3 ${msg.role === 'ai' ? 'justify-start' : 'justify-end'}`}>
                             {msg.role === 'ai' && (
                                 <div className="w-8 h-8 rounded-full bg-violet-500/20 flex items-center justify-center border border-violet-500/30 shrink-0">
                                     <Bot className="w-4 h-4 text-violet-300" />
@@ -158,14 +181,10 @@ export default function ChatPage() {
                             }`}>
                                 <ReactMarkdown 
                                     components={{
-                                        code: ({node, inline, className, children, ...props}: any) => (
-                                            inline 
-                                                ? <code className="bg-black/30 px-1 py-0.5 rounded text-violet-200 font-mono text-xs" {...props}>{children}</code>
-                                                : <div className="bg-black/30 p-2 rounded-md my-2 overflow-x-auto"><code className="text-xs font-mono text-gray-300" {...props}>{children}</code></div>
-                                        ),
-                                        p: ({children}) => <p className="mb-2 last:mb-0">{children}</p>,
-                                        ul: ({children}) => <ul className="list-disc pl-4 mb-2 space-y-1">{children}</ul>,
-                                        ol: ({children}) => <ul className="list-decimal pl-4 mb-2 space-y-1">{children}</ul>,
+                                        code: MarkdownCode,
+                                        p: MarkdownParagraph,
+                                        ul: MarkdownUnorderedList,
+                                        ol: MarkdownOrderedList,
                                     }}
                                 >
                                     {msg.content}

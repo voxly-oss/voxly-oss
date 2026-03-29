@@ -6,17 +6,17 @@ from fastapi.testclient import TestClient
 # ── Helpers ──────────────────────────────────────────────────────────
 
 
-def _register_and_get_token(client: TestClient, email: str, password: str = "Test1234") -> str:
+def _register_and_get_token(client: TestClient, email: str, credential: str = "Test1234") -> str:
     """Register a user and return their JWT token."""
     client.post("/api/v1/auth/register", json={
         "email": email,
-        "password": password,
+        "password": credential,
         "full_name": "Test User",
         "agency_name": "Test Agency",
     })
     resp = client.post("/api/v1/auth/login", data={
         "username": email,
-        "password": password,
+        "password": credential,
     })
     return resp.json()["access_token"]
 

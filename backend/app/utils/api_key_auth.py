@@ -28,7 +28,7 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 def _utcnow_for_compare(dt):
     """Return a 'now' datetime compatible with `dt` timezone awareness."""
     if dt is not None and dt.tzinfo is None:
-        return datetime.utcnow()
+        return datetime.now(timezone.utc).replace(tzinfo=None)
     return datetime.now(timezone.utc)
 
 

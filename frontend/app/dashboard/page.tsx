@@ -55,6 +55,18 @@ const itemVariants = {
     visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.25, 0.1, 0.25, 1.0] as const } }
 };
 
+const RECENT_CLIENT_SKELETON_KEYS = [
+    'recent-client-skeleton-1',
+    'recent-client-skeleton-2',
+    'recent-client-skeleton-3',
+];
+
+const ACTIVE_PROJECT_SKELETON_KEYS = [
+    'active-project-skeleton-1',
+    'active-project-skeleton-2',
+    'active-project-skeleton-3',
+];
+
 /* ─── Animated counter ─── */
 function AnimatedNumber({ value, duration = 1.5 }: { value: number; duration?: number }) {
     const ref = useRef<HTMLSpanElement>(null);
@@ -232,7 +244,7 @@ export default function DashboardPage() {
             >
                 <div>
                     <h1 className="text-3xl font-bold text-white flex items-center gap-3 tracking-tight">
-                        Dashboard
+                        Dashboard{' '}
                         <span className="relative flex h-3 w-3">
                           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75"></span>
                           <span className="relative inline-flex rounded-full h-3 w-3 bg-violet-500"></span>
@@ -255,36 +267,44 @@ export default function DashboardPage() {
                 className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4"
                 variants={itemVariants}
             >
-                {stats.map((stat, i) => (
-                    <SpotlightCard
-                        key={stat.title}
-                        className={` h-full transition-all duration-300 hover:scale-[1.02] bg-[#0a0a0f]/50 border-white/5`}
-                        spotlightColor="rgba(139, 92, 246, 0.15)"
-                    >
-                        <div className="flex items-start justify-between">
-                            <div>
-                                <p className="text-sm font-medium text-white/50 mb-1">{stat.title}</p>
-                                <p className="text-3xl font-bold text-white tracking-tight">
-                                    {isLoading ? (
-                                        <span className="inline-block w-16 h-8 skeleton rounded" />
-                                    ) : stat.title === 'AI Accuracy' ? (
-                                        <><AnimatedNumber value={stat.value} /><span className="text-lg font-normal text-white/40 ml-0.5">%</span></>
-                                    ) : (
-                                        <AnimatedNumber value={stat.value} />
-                                    )}
-                                </p>
+                {stats.map((stat, i) => {
+                    let statValueContent = <AnimatedNumber value={stat.value} />;
+                    if (isLoading) {
+                        statValueContent = <span className="inline-block w-16 h-8 skeleton rounded" />;
+                    } else if (stat.title === 'AI Accuracy') {
+                        statValueContent = (
+                            <>
+                                <AnimatedNumber value={stat.value} />
+                                <span className="text-lg font-normal text-white/40 ml-0.5">%</span>
+                            </>
+                        );
+                    }
+
+                    return (
+                        <SpotlightCard
+                            key={stat.title}
+                            className={` h-full transition-all duration-300 hover:scale-[1.02] bg-[#0a0a0f]/50 border-white/5`}
+                            spotlightColor="rgba(139, 92, 246, 0.15)"
+                        >
+                            <div className="flex items-start justify-between">
+                                <div>
+                                    <p className="text-sm font-medium text-white/50 mb-1">{stat.title}</p>
+                                    <p className="text-3xl font-bold text-white tracking-tight">
+                                        {statValueContent}
+                                    </p>
+                                </div>
+                                <div className={`p-3 rounded-xl bg-gradient-to-br ${stat.gradient} border ${stat.borderColor} shadow-[inset_0_0_15px_rgba(255,255,255,0.05)]`}>
+                                    <stat.icon className={`w-5 h-5 ${stat.iconColor}`} />
+                                </div>
                             </div>
-                            <div className={`p-3 rounded-xl bg-gradient-to-br ${stat.gradient} border ${stat.borderColor} shadow-[inset_0_0_15px_rgba(255,255,255,0.05)]`}>
-                                <stat.icon className={`w-5 h-5 ${stat.iconColor}`} />
+                            <div className="flex items-center gap-1.5 mt-4 text-xs font-medium">
+                                <TrendingUp className={`w-3.5 h-3.5 ${stat.trendUp ? 'text-emerald-400' : 'text-blue-400 rotate-180'}`} />
+                                <span className={stat.trendUp ? 'text-emerald-400' : 'text-blue-400'}>{stat.trend}</span>
+                                <span className="text-white/30">vs last month</span>
                             </div>
-                        </div>
-                        <div className="flex items-center gap-1.5 mt-4 text-xs font-medium">
-                            <TrendingUp className={`w-3.5 h-3.5 ${stat.trendUp ? 'text-emerald-400' : 'text-blue-400 rotate-180'}`} />
-                            <span className={stat.trendUp ? 'text-emerald-400' : 'text-blue-400'}>{stat.trend}</span>
-                            <span className="text-white/30">vs last month</span>
-                        </div>
-                    </SpotlightCard>
-                ))}
+                        </SpotlightCard>
+                    );
+                })}
             </motion.div>
 
             {/* Quick actions bar */}
@@ -329,55 +349,65 @@ export default function DashboardPage() {
                             </Link>
                         </div>
                         <div className="p-4 flex-1">
-                            {clientsLoading ? (
-                                <div className="space-y-1">
-                                    {[...Array(3)].map((_, i) => (
-                                        <SkeletonRow key={i} />
-                                    ))}
-                                </div>
-                            ) : clients.length === 0 ? (
-                                <EmptyState
-                                    icon={Users}
-                                    title="No clients yet"
-                                    description="Add your first client to start managing projects"
-                                    actionLabel="Add Client"
-                                    actionHref="/clients/new"
-                                    gradient="from-violet-500/20 to-purple-500/20"
-                                />
-                            ) : (
-                                <div className="space-y-1">
-                                    {clients.slice(0, 5).map((client, i) => (
-                                        <motion.div
-                                            key={client.id}
-                                            initial={{ opacity: 0, x: -10 }}
-                                            animate={{ opacity: 1, x: 0 }}
-                                            transition={{ delay: i * 0.05, duration: 0.3 }}
-                                        >
-                                            <Link
-                                                href={`/clients/${client.id}`}
-                                                className="flex items-center justify-between p-3 rounded-lg hover:bg-white/5 transition-all group border border-transparent hover:border-white/5"
+                            {(() => {
+                                if (clientsLoading) {
+                                    return (
+                                        <div className="space-y-1">
+                                            {RECENT_CLIENT_SKELETON_KEYS.map((skeletonKey) => (
+                                                <SkeletonRow key={skeletonKey} />
+                                            ))}
+                                        </div>
+                                    );
+                                }
+
+                                if (clients.length === 0) {
+                                    return (
+                                        <EmptyState
+                                            icon={Users}
+                                            title="No clients yet"
+                                            description="Add your first client to start managing projects"
+                                            actionLabel="Add Client"
+                                            actionHref="/clients/new"
+                                            gradient="from-violet-500/20 to-purple-500/20"
+                                        />
+                                    );
+                                }
+
+                                return (
+                                    <div className="space-y-1">
+                                        {clients.slice(0, 5).map((client, i) => (
+                                            <motion.div
+                                                key={client.id}
+                                                initial={{ opacity: 0, x: -10 }}
+                                                animate={{ opacity: 1, x: 0 }}
+                                                transition={{ delay: i * 0.05, duration: 0.3 }}
                                             >
-                                                <div className="flex items-center gap-3">
-                                                    <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-violet-500/10 to-blue-500/10 border border-white/5 flex items-center justify-center group-hover:border-violet-500/30 transition-all font-semibold text-white/70 group-hover:text-violet-400 group-hover:shadow-[0_0_15px_-5px_rgba(139,92,246,0.3)]">
-                                                        {client.name.charAt(0).toUpperCase()}
+                                                <Link
+                                                    href={`/clients/${client.id}`}
+                                                    className="flex items-center justify-between p-3 rounded-lg hover:bg-white/5 transition-all group border border-transparent hover:border-white/5"
+                                                >
+                                                    <div className="flex items-center gap-3">
+                                                        <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-violet-500/10 to-blue-500/10 border border-white/5 flex items-center justify-center group-hover:border-violet-500/30 transition-all font-semibold text-white/70 group-hover:text-violet-400 group-hover:shadow-[0_0_15px_-5px_rgba(139,92,246,0.3)]">
+                                                            {client.name.charAt(0).toUpperCase()}
+                                                        </div>
+                                                        <div>
+                                                            <p className="font-medium text-sm text-white group-hover:text-violet-200 transition-colors">
+                                                                {client.name}
+                                                            </p>
+                                                            <p className="text-xs text-white/40">
+                                                                {client.company || 'No company'}
+                                                            </p>
+                                                        </div>
                                                     </div>
-                                                    <div>
-                                                        <p className="font-medium text-sm text-white group-hover:text-violet-200 transition-colors">
-                                                            {client.name}
-                                                        </p>
-                                                        <p className="text-xs text-white/40">
-                                                            {client.company || 'No company'}
-                                                        </p>
-                                                    </div>
-                                                </div>
-                                                <span className="text-xs text-white/30 group-hover:text-white/50 transition-colors bg-white/5 px-2 py-1 rounded-md">
-                                                    {formatDate(client.created_at)}
-                                                </span>
-                                            </Link>
-                                        </motion.div>
-                                    ))}
-                                </div>
-                            )}
+                                                    <span className="text-xs text-white/30 group-hover:text-white/50 transition-colors bg-white/5 px-2 py-1 rounded-md">
+                                                        {formatDate(client.created_at)}
+                                                    </span>
+                                                </Link>
+                                            </motion.div>
+                                        ))}
+                                    </div>
+                                );
+                            })()}
                         </div>
                     </SpotlightCard>
                 </motion.div>
@@ -398,55 +428,65 @@ export default function DashboardPage() {
                             </Link>
                         </div>
                         <div className="p-4 flex-1">
-                            {projectsLoading ? (
-                                <div className="space-y-1">
-                                    {[...Array(3)].map((_, i) => (
-                                        <SkeletonRow key={i} />
-                                    ))}
-                                </div>
-                            ) : activeProjects.length === 0 ? (
-                                <EmptyState
-                                    icon={Rocket}
-                                    title="No active projects"
-                                    description="Create a project under any client to see it here"
-                                    actionLabel="View Clients"
-                                    actionHref="/clients"
-                                    gradient="from-blue-500/20 to-cyan-500/20"
-                                />
-                            ) : (
-                                <div className="space-y-1">
-                                    {activeProjects.slice(0, 5).map((project, i) => (
-                                        <motion.div
-                                            key={project.id}
-                                            initial={{ opacity: 0, x: -10 }}
-                                            animate={{ opacity: 1, x: 0 }}
-                                            transition={{ delay: i * 0.05, duration: 0.3 }}
-                                        >
-                                            <Link
-                                                href={`/clients/${project.client_id}/projects/${project.id}`}
-                                                className="flex items-center justify-between p-3 rounded-lg hover:bg-white/5 transition-all group border border-transparent hover:border-white/5"
+                            {(() => {
+                                if (projectsLoading) {
+                                    return (
+                                        <div className="space-y-1">
+                                            {ACTIVE_PROJECT_SKELETON_KEYS.map((skeletonKey) => (
+                                                <SkeletonRow key={skeletonKey} />
+                                            ))}
+                                        </div>
+                                    );
+                                }
+
+                                if (activeProjects.length === 0) {
+                                    return (
+                                        <EmptyState
+                                            icon={Rocket}
+                                            title="No active projects"
+                                            description="Create a project under any client to see it here"
+                                            actionLabel="View Clients"
+                                            actionHref="/clients"
+                                            gradient="from-blue-500/20 to-cyan-500/20"
+                                        />
+                                    );
+                                }
+
+                                return (
+                                    <div className="space-y-1">
+                                        {activeProjects.slice(0, 5).map((project, i) => (
+                                            <motion.div
+                                                key={project.id}
+                                                initial={{ opacity: 0, x: -10 }}
+                                                animate={{ opacity: 1, x: 0 }}
+                                                transition={{ delay: i * 0.05, duration: 0.3 }}
                                             >
-                                                <div className="flex items-center gap-3">
-                                                    <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-500/10 to-cyan-500/10 border border-white/5 flex items-center justify-center group-hover:border-blue-500/30 transition-all text-white/70 group-hover:text-blue-400 group-hover:shadow-[0_0_15px_-5px_rgba(59,130,246,0.3)]">
-                                                        <FolderGit2 className="w-4 h-4" />
+                                                <Link
+                                                    href={`/clients/${project.client_id}/projects/${project.id}`}
+                                                    className="flex items-center justify-between p-3 rounded-lg hover:bg-white/5 transition-all group border border-transparent hover:border-white/5"
+                                                >
+                                                    <div className="flex items-center gap-3">
+                                                        <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-500/10 to-cyan-500/10 border border-white/5 flex items-center justify-center group-hover:border-blue-500/30 transition-all text-white/70 group-hover:text-blue-400 group-hover:shadow-[0_0_15px_-5px_rgba(59,130,246,0.3)]">
+                                                            <FolderGit2 className="w-4 h-4" />
+                                                        </div>
+                                                        <div>
+                                                            <p className="font-medium text-sm text-white group-hover:text-blue-200 transition-colors">
+                                                                {project.name}
+                                                            </p>
+                                                            <p className="text-xs text-white/40">
+                                                                Due {formatDate(project.expected_end_date)}
+                                                            </p>
+                                                        </div>
                                                     </div>
-                                                    <div>
-                                                        <p className="font-medium text-sm text-white group-hover:text-blue-200 transition-colors">
-                                                            {project.name}
-                                                        </p>
-                                                        <p className="text-xs text-white/40">
-                                                            Due {formatDate(project.expected_end_date)}
-                                                        </p>
-                                                    </div>
-                                                </div>
-                                                <Badge className={`${getStatusBadge(project.status)} border rounded-md px-2 py-0.5 text-[10px] uppercase font-semibold tracking-wider`}>
-                                                    {project.status}
-                                                </Badge>
-                                            </Link>
-                                        </motion.div>
-                                    ))}
-                                </div>
-                            )}
+                                                    <Badge className={`${getStatusBadge(project.status)} border rounded-md px-2 py-0.5 text-[10px] uppercase font-semibold tracking-wider`}>
+                                                        {project.status}
+                                                    </Badge>
+                                                </Link>
+                                            </motion.div>
+                                        ))}
+                                    </div>
+                                );
+                            })()}
                         </div>
                     </SpotlightCard>
                 </motion.div>

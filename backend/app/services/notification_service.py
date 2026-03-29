@@ -9,8 +9,6 @@ Sends WhatsApp messages to clients when events happen in the dashboard:
 - Manual follow-up → custom message
 """
 import logging
-from typing import Optional
-from sqlalchemy.orm import Session
 
 from app.services.whatsapp_service import send_whatsapp_message
 from app.models.user import User
@@ -45,7 +43,6 @@ async def send_notification(
     phone: str,
     template_name: str,
     context: dict,
-    db: Optional[Session] = None
 ) -> bool:
     """
     Send a templated notification via WhatsApp.
@@ -54,8 +51,6 @@ async def send_notification(
         phone: Client's phone number
         template_name: Key from TEMPLATES dict
         context: Dict with placeholder values
-        db: Optional DB session for logging
-    
     Returns:
         True if sent successfully
     """

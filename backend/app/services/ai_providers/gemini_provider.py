@@ -14,6 +14,124 @@ except ImportError:  # pragma: no cover - dependency availability is environment
     genai = None
     types = None
 
+
+def _to_gemini_tools(tools: list) -> list:
+    gemini_tools = []
+    for tool in tools:
+        schema = tool.to_openai_schema()
+        func = schema["function"]
+        gemini_tools.append(
+            types.Tool(
+                function_declarations=[
+                    types.FunctionDeclaration(
+                        name=func["name"],
+                        description=func["description"],
+                        parameters=func["parameters"],
+                    )
+                ]
+            )
+        )
+    return gemini_tools
+
+
+def _to_gemini_contents(messages: list) -> list:
+    contents = []
+    for msg in messages:
+        role = "model"
+        if msg["role"] == "user":
+            role = "user"
+        elif msg["role"] == "tool":
+            role = "tool"
+
+        content = msg["content"]
+        parts = []
+        if isinstance(content, str):
+            parts.append({"text": content})
+        elif isinstance(content, list):
+            for block in content:
+                if block.get("type") == "text":
+                    parts.append({"text": block.get("text")})
+                elif block.get("type") == "tool_use":
+                    parts.append(
+                        {
+                            "function_call": {
+                                "name": block.get("name"),
+                                "args": block.get("input"),
+                            }
+                        }
+                    )
+                elif block.get("type") == "tool_result":
+                    parts.append(
+                        {
+                            "function_response": {
+                                "name": block.get("name"),
+                                "response": {"result": block.get("content")},
+                            }
+                        }
+                    )
+        if parts:
+            contents.append({"role": role, "parts": parts})
+    return contents
+
+
+def _build_usage_object(usage) -> Any:
+    if usage:
+        return type(
+            "Usage",
+            (),
+            {
+                "input_tokens": getattr(usage, "prompt_token_count", 0),
+                "output_tokens": getattr(usage, "candidates_token_count", 0),
+            },
+        )()
+    return type("Usage", (), {"input_tokens": 0, "output_tokens": 0})()
+
+
+def _build_provider_response(response, model_name: str):
+    content_blocks = []
+    stop_reason = "end_turn"
+    if response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
+        for part in response.candidates[0].content.parts:
+            if part.function_call:
+                content_blocks.append(
+                    type(
+                        "ToolUseBlock",
+                        (),
+                        {
+                            "type": "tool_use",
+                            "name": part.function_call.name,
+                            "input": part.function_call.args,
+                            "id": f"call_{part.function_call.name}_{response.candidates[0].index}",
+                        },
+                    )()
+                )
+                stop_reason = "tool_use"
+            elif part.text:
+                content_blocks.append(type("TextBlock", (), {"type": "text", "text": part.text})())
+    return type(
+        "ProviderResponse",
+        (),
+        {
+            "content": content_blocks,
+            "stop_reason": stop_reason,
+            "usage": _build_usage_object(response.usage_metadata),
+            "model": model_name,
+        },
+    )()
+
+
+def _build_error_provider_response(error: Exception):
+    return type(
+        "ProviderResponse",
+        (),
+        {
+            "content": [type("TextBlock", (), {"type": "text", "text": f"Error: {error}"})()],
+            "stop_reason": "end_turn",
+            "usage": type("Usage", (), {"input_tokens": 0, "output_tokens": 0})(),
+            "model": "error",
+        },
+    )()
+
 class GeminiProvider(AIProvider):
     """Google Gemini (Pro 1.5) provider using the modern google-genai SDK."""
     
@@ -104,59 +222,8 @@ class GeminiProvider(AIProvider):
         """
         Generate response using Gemini Function Calling (new SDK).
         """
-        # Convert tools to Gemini format using types.Tool wrapper
-        gemini_tools = []
-        for tool in tools:
-            schema = tool.to_openai_schema()
-            func = schema['function']
-            
-            # Use proper SDK types as per CodeRabbit review
-            gemini_tools.append(types.Tool(
-                function_declarations=[types.FunctionDeclaration(
-                    name=func['name'],
-                    description=func['description'],
-                    parameters=func['parameters']
-                )]
-            ))
-
-        # Prepare chat history for the new SDK
-        # The new SDK expects a list of Content objects
-        contents = []
-        for msg in messages:
-            # Map roles accurately
-            if msg['role'] == 'user':
-                role = "user"
-            elif msg['role'] == 'tool':
-                role = "tool" # Use tool role for function results
-            else:
-                role = "model"
-            
-            content = msg['content']
-            
-            parts = []
-            if isinstance(content, str):
-                parts.append({"text": content})
-            elif isinstance(content, list):
-                for block in content:
-                    if block.get('type') == 'text':
-                        parts.append({"text": block.get('text')})
-                    elif block.get('type') == 'tool_use':
-                        parts.append({
-                            "function_call": {
-                                "name": block.get('name'),
-                                "args": block.get('input')
-                            }
-                        })
-                    elif block.get('type') == 'tool_result':
-                        parts.append({
-                            "function_response": {
-                                "name": block.get('name'),
-                                "response": {"result": block.get('content')}
-                            }
-                        })
-            
-            if parts:
-                contents.append({"role": role, "parts": parts})
+        gemini_tools = _to_gemini_tools(tools)
+        contents = _to_gemini_contents(messages)
 
         try:
             # Using generate_content with tools and system_instruction
@@ -171,52 +238,11 @@ class GeminiProvider(AIProvider):
                 )
             )
 
-            # Map response parts back to unified format with safety checks
-            content_blocks = []
-            stop_reason = "end_turn"
-            
-            if response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
-                for part in response.candidates[0].content.parts:
-                    if part.function_call:
-                        content_blocks.append(type('ToolUseBlock', (), {
-                            'type': 'tool_use',
-                            'name': part.function_call.name,
-                            'input': part.function_call.args,
-                            'id': f"call_{part.function_call.name}_{response.candidates[0].index}"
-                        })())
-                        stop_reason = "tool_use"
-                    elif part.text:
-                        content_blocks.append(type('TextBlock', (), {'type': 'text', 'text': part.text})())
-
-            # Usage metadata with null safety
-            usage = response.usage_metadata
-            if usage:
-                usage_obj = type('Usage', (), {
-                    'input_tokens': getattr(usage, 'prompt_token_count', 0),
-                    'output_tokens': getattr(usage, 'candidates_token_count', 0)
-                })()
-            else:
-                usage_obj = type('Usage', (), {'input_tokens': 0, 'output_tokens': 0})()
-
-            # Mock Provider Response Object
-            provider_response = type('ProviderResponse', (), {
-                'content': content_blocks,
-                'stop_reason': stop_reason,
-                'usage': usage_obj,
-                'model': self.model_name
-            })()
-            
-            return provider_response
+            return _build_provider_response(response, self.model_name)
 
         except Exception as e:
             logger.error(f"Gemini Tool Error: {e}")
-            # Fallback to empty response
-            return type('ProviderResponse', (), {
-                'content': [type('TextBlock', (), {'type': 'text', 'text': f"Error: {e}"})()],
-                'stop_reason': 'end_turn',
-                'usage': type('Usage', (), {'input_tokens': 0, 'output_tokens': 0})(),
-                'model': 'error'
-            })()
+            return _build_error_provider_response(e)
 
     @staticmethod
     def _safe_int(value, default: int = 0) -> int:

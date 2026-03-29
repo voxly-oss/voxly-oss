@@ -1,5 +1,5 @@
-from datetime import datetime
-from typing import List
+from datetime import datetime, timezone
+from typing import Annotated, List
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
@@ -14,6 +14,7 @@ from app.schemas.milestone import MilestoneCreate, MilestoneUpdate, MilestoneRes
 from app.utils.auth import get_current_user
 
 router = APIRouter()
+MILESTONE_NOT_FOUND = "Milestone not found"
 
 
 def get_user_project_ids(db: Session, user_id: UUID) -> List[UUID]:
@@ -27,13 +28,45 @@ def get_user_project_ids(db: Session, user_id: UUID) -> List[UUID]:
     return [project.id for project in projects]
 
 
+def _get_project_progress(db: Session, project_id: UUID) -> int:
+    all_milestones = db.query(Milestone).filter(Milestone.project_id == project_id).all()
+    total = len(all_milestones)
+    completed = sum(1 for milestone in all_milestones if milestone.status == "completed")
+    return int((completed / total) * 100) if total > 0 else 0
+
+
+def _queue_milestone_completed_notification(
+    background_tasks: BackgroundTasks,
+    db: Session,
+    milestone: Milestone,
+) -> None:
+    project = db.query(Project).filter(Project.id == milestone.project_id).first()
+    if not project:
+        return
+
+    client = db.query(Client).filter(Client.id == project.client_id).first()
+    if not client or not client.phone:
+        return
+
+    from app.services.notification_service import on_milestone_completed
+
+    background_tasks.add_task(
+        on_milestone_completed,
+        client_name=client.name,
+        client_phone=client.phone,
+        project_name=project.name,
+        milestone_title=milestone.title,
+        progress=_get_project_progress(db, project.id),
+    )
+
+
 @router.get("", response_model=List[MilestoneResponse])
-async def list_milestones(
+async def list_milestones(*, 
     project_id: UUID = None,
     skip: int = 0,
     limit: int = 100,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db: Annotated[Session , Depends(get_db)],
+    current_user: Annotated[User , Depends(get_current_user)]
 ):
     """List all milestones for the current user's projects."""
     user_project_ids = get_user_project_ids(db, current_user.id)
@@ -54,10 +87,10 @@ async def list_milestones(
 
 
 @router.post("", response_model=MilestoneResponse, status_code=status.HTTP_201_CREATED)
-async def create_milestone(
+async def create_milestone(*, 
     milestone_data: MilestoneCreate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db: Annotated[Session , Depends(get_db)],
+    current_user: Annotated[User , Depends(get_current_user)]
 ):
     """Create a new milestone."""
     user_project_ids = get_user_project_ids(db, current_user.id)
@@ -93,10 +126,10 @@ async def create_milestone(
 
 
 @router.get("/{milestone_id}", response_model=MilestoneResponse)
-async def get_milestone(
+async def get_milestone(*, 
     milestone_id: UUID,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db: Annotated[Session , Depends(get_db)],
+    current_user: Annotated[User , Depends(get_current_user)]
 ):
     """Get a specific milestone by ID."""
     user_project_ids = get_user_project_ids(db, current_user.id)
@@ -110,19 +143,19 @@ async def get_milestone(
     if not milestone:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Milestone not found"
+            detail=MILESTONE_NOT_FOUND
         )
     
     return milestone
 
 
 @router.put("/{milestone_id}", response_model=MilestoneResponse)
-async def update_milestone(
+async def update_milestone(*, 
     milestone_id: UUID,
     milestone_data: MilestoneUpdate,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db: Annotated[Session , Depends(get_db)],
+    current_user: Annotated[User , Depends(get_current_user)]
 ):
     """Update a milestone."""
     user_project_ids = get_user_project_ids(db, current_user.id)
@@ -136,7 +169,7 @@ async def update_milestone(
     if not milestone:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Milestone not found"
+            detail=MILESTONE_NOT_FOUND
         )
     
     # Track old status for notification trigger
@@ -147,7 +180,7 @@ async def update_milestone(
     
     # Auto-set completed_at when status changes to completed
     if update_data.get("status") == "completed" and old_status != "completed":
-        update_data["completed_at"] = datetime.utcnow()
+        update_data["completed_at"] = datetime.now(timezone.utc)
     
     for field, value in update_data.items():
         setattr(milestone, field, value)
@@ -164,36 +197,16 @@ async def update_milestone(
     
     # Send milestone completed notification
     if old_status != "completed" and milestone.status == "completed":
-        project = db.query(Project).filter(Project.id == milestone.project_id).first()
-        if project:
-            client = db.query(Client).filter(Client.id == project.client_id).first()
-            if client and client.phone:
-                # Calculate overall project progress
-                all_milestones = db.query(Milestone).filter(
-                    Milestone.project_id == project.id
-                ).all()
-                total = len(all_milestones)
-                completed = sum(1 for m in all_milestones if m.status == "completed")
-                progress = int((completed / total) * 100) if total > 0 else 0
-                
-                from app.services.notification_service import on_milestone_completed
-                background_tasks.add_task(
-                    on_milestone_completed,
-                    client_name=client.name,
-                    client_phone=client.phone,
-                    project_name=project.name,
-                    milestone_title=milestone.title,
-                    progress=progress
-                )
+        _queue_milestone_completed_notification(background_tasks, db, milestone)
     
     return milestone
 
 
 @router.delete("/{milestone_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_milestone(
+async def delete_milestone(*, 
     milestone_id: UUID,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db: Annotated[Session , Depends(get_db)],
+    current_user: Annotated[User , Depends(get_current_user)]
 ):
     """Delete a milestone."""
     user_project_ids = get_user_project_ids(db, current_user.id)
@@ -207,7 +220,7 @@ async def delete_milestone(
     if not milestone:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Milestone not found"
+            detail=MILESTONE_NOT_FOUND
         )
     
     try:

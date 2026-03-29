@@ -327,6 +327,45 @@ ${chalk.dim('──────────────────────�
 `);
 }
 
+async function confirmOverwrite(directory) {
+    const { overwrite } = await inquirer.prompt([
+        {
+            type: 'confirm',
+            name: 'overwrite',
+            message: chalk.yellow(`Directory "${directory}" already exists. Overwrite?`),
+            default: false,
+        },
+    ]);
+    return overwrite;
+}
+
+async function ensureTargetDirectory(targetDir, directory) {
+    if (!fs.existsSync(targetDir)) {
+        return;
+    }
+
+    const overwrite = await confirmOverwrite(directory);
+    if (!overwrite) {
+        console.log(chalk.red('Aborted.'));
+        process.exit(1);
+    }
+
+    fs.rmSync(targetDir, { recursive: true, force: true });
+}
+
+async function handleCreateVoxly(directory, options) {
+    console.log(banner);
+
+    const targetDir = path.resolve(process.cwd(), directory);
+    await ensureTargetDirectory(targetDir, directory);
+
+    const config = await getConfig();
+    if (options.docker) config.useDocker = true;
+
+    await scaffold(targetDir, config, options);
+    printSuccess(directory);
+}
+
 /* ─── Main CLI ─── */
 const program = new Command();
 
@@ -337,34 +376,6 @@ program
     .argument('[directory]', 'Target directory name', 'voxly')
     .option('--docker', 'Use Docker Compose mode')
     .option('--skip-install', 'Skip dependency installation')
-    .action(async (directory, options) => {
-        console.log(banner);
-
-        const targetDir = path.resolve(process.cwd(), directory);
-
-        // Check if directory already exists
-        if (fs.existsSync(targetDir)) {
-            const { overwrite } = await inquirer.prompt([
-                {
-                    type: 'confirm',
-                    name: 'overwrite',
-                    message: chalk.yellow(`Directory "${directory}" already exists. Overwrite?`),
-                    default: false,
-                },
-            ]);
-            if (!overwrite) {
-                console.log(chalk.red('Aborted.'));
-                process.exit(1);
-            }
-            fs.rmSync(targetDir, { recursive: true, force: true });
-        }
-
-        const config = await getConfig();
-        if (options.docker) config.useDocker = true;
-
-        await scaffold(targetDir, config, options);
-
-        printSuccess(directory);
-    });
+    .action(handleCreateVoxly);
 
 program.parse();

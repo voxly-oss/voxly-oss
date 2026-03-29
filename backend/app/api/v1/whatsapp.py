@@ -32,7 +32,95 @@ def _build_twilio_validation_url(request: Request) -> str:
     return url
 
 
-@router.post("/webhook")
+async def _broadcast_incoming_message(client: Client, message: str) -> None:
+    try:
+        await manager.broadcast(
+            {
+                "type": "incoming_message",
+                "message": {
+                    "client_id": str(client.id),
+                    "client_name": client.name,
+                    "message": message,
+                },
+            },
+            str(client.user_id),
+        )
+    except Exception as exc:
+        logger.error(f"WebSocket broadcast failed: {exc}")
+
+
+def _get_client_project(db, client: Client) -> Project | None:
+    project = (
+        db.query(Project)
+        .filter(Project.client_id == client.id, Project.status == "active")
+        .first()
+    )
+    if project:
+        return project
+    return db.query(Project).filter(Project.client_id == client.id).first()
+
+
+async def _get_project_github_stats(project: Project | None) -> dict:
+    if not project or not project.github_repo:
+        return {}
+    try:
+        return await get_github_stats_cached(str(project.id), project.github_repo)
+    except Exception:
+        return {}
+
+
+def _serialize_project_milestones(db, project: Project | None) -> list[dict]:
+    if not project:
+        return []
+    ms_rows = db.query(Milestone).filter(Milestone.project_id == project.id).all()
+    return [
+        {
+            "title": milestone.title,
+            "status": milestone.status,
+            "progress": getattr(milestone, "progress", 0),
+            "due_date": (
+                str(milestone.due_date) if getattr(milestone, "due_date", None) else None
+            ),
+        }
+        for milestone in ms_rows
+    ]
+
+
+def _save_chat_history(
+    db,
+    client: Client,
+    project: Project | None,
+    message: str,
+    reply: str,
+    ai_result: dict,
+) -> None:
+    if not project:
+        return
+    try:
+        chat_entry = ChatHistory(
+            id=uuid.uuid4(),
+            client_id=client.id,
+            project_id=project.id,
+            message=message or "",
+            response=reply,
+            tokens_used=ai_result.get("tokens_used", 0),
+            ai_model=ai_result.get("model", "unknown"),
+            channel="whatsapp",
+        )
+        db.add(chat_entry)
+        db.commit()
+    except Exception as exc:
+        logger.error(f"Failed to save chat history: {exc}")
+
+
+@router.post(
+    "/webhook",
+    responses={
+        401: {"description": "Missing or invalid Twilio signature"},
+        500: {"description": "Webhook processing failed"},
+        503: {"description": "Twilio is not configured"},
+    },
+)
 async def whatsapp_webhook(
     request: Request,
     background_tasks: BackgroundTasks
@@ -106,59 +194,18 @@ async def process_whatsapp_message(
         # Look up client by phone number
         client = db.query(Client).filter(Client.phone == phone).first()
         if not client:
-            logger.warning(f"No client found for incoming WhatsApp message")
+            logger.warning("No client found for incoming WhatsApp message")
             await send_whatsapp_message(
                 phone,
                 "Sorry, I don't recognise your number. Please contact your project manager. 🙏"
             )
             return
 
-        # Broadcast incoming message to dashboard
-        try:
-            await manager.broadcast({
-                "type": "incoming_message",
-                "message": {
-                    "client_id": str(client.id),
-                    "client_name": client.name,
-                    "message": message,
-                }
-            }, str(client.user_id))
-        except Exception as ws_err:
-            logger.error(f"WebSocket broadcast failed: {ws_err}")
-
-        # Get the client's active project
-        project = (
-            db.query(Project)
-            .filter(Project.client_id == client.id, Project.status == "active")
-            .first()
-        )
-        if not project:
-            # Fallback: any project
-            project = db.query(Project).filter(Project.client_id == client.id).first()
-
+        await _broadcast_incoming_message(client, message)
+        project = _get_client_project(db, client)
         project_name = project.name if project else "your project"
-
-        # Get GitHub stats (cached)
-        github_stats = {}
-        if project and project.github_repo:
-            try:
-                github_stats = await get_github_stats_cached(project.github_repo)
-            except Exception:
-                pass
-
-        # Get milestones
-        milestones = []
-        if project:
-            ms_rows = db.query(Milestone).filter(Milestone.project_id == project.id).all()
-            milestones = [
-                {
-                    "title": m.title,
-                    "status": m.status,
-                    "progress": getattr(m, "progress", 0),
-                    "due_date": str(m.due_date) if getattr(m, "due_date", None) else None,
-                }
-                for m in ms_rows
-            ]
+        github_stats = await _get_project_github_stats(project)
+        milestones = _serialize_project_milestones(db, project)
 
         # Call AI service directly (no HTTP, no rate limiter)
         ai_result = await generate_client_response(
@@ -174,23 +221,7 @@ async def process_whatsapp_message(
         if not reply:
             reply = "Sorry, I couldn't generate a response right now. Please try again. 🙏"
 
-        # Save to chat history
-        if project:
-            try:
-                chat_entry = ChatHistory(
-                    id=uuid.uuid4(),
-                    client_id=client.id,
-                    project_id=project.id,
-                    message=message or "",
-                    response=reply,
-                    tokens_used=ai_result.get("tokens_used", 0),
-                    ai_model=ai_result.get("model", "unknown"),
-                    channel="whatsapp",
-                )
-                db.add(chat_entry)
-                db.commit()
-            except Exception as save_err:
-                logger.error(f"Failed to save chat history: {save_err}")
+        _save_chat_history(db, client, project, message, reply, ai_result)
 
         # Send WhatsApp reply
         success = await send_whatsapp_message(to_number=phone, message=reply)

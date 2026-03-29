@@ -313,19 +313,19 @@ voxly dev`} />
                                 <h3 className="text-lg font-semibold text-white mb-4">System Flow</h3>
                                 <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-center">
                                     {[
-                                        { icon: GitBranch, label: 'GitHub Repos', color: 'text-white', bg: 'from-gray-500/20 to-gray-600/20' },
-                                        { icon: ChevronRight, label: '', color: 'text-white/30', bg: '' },
-                                        { icon: Server, label: 'FastAPI Backend\n+ Claude AI', color: 'text-violet-400', bg: 'from-violet-500/20 to-blue-600/20' },
-                                        { icon: ChevronRight, label: '', color: 'text-white/30', bg: '' },
-                                        { icon: MessageSquare, label: 'WhatsApp\n(Twilio)', color: 'text-emerald-400', bg: 'from-emerald-500/20 to-green-600/20' },
-                                    ].map((item, i) =>
+                                        { id: 'github', icon: GitBranch, label: 'GitHub Repos', color: 'text-white', bg: 'from-gray-500/20 to-gray-600/20' },
+                                        { id: 'arrow-1', icon: ChevronRight, label: '', color: 'text-white/30', bg: '' },
+                                        { id: 'backend', icon: Server, label: 'FastAPI Backend\n+ Claude AI', color: 'text-violet-400', bg: 'from-violet-500/20 to-blue-600/20' },
+                                        { id: 'arrow-2', icon: ChevronRight, label: '', color: 'text-white/30', bg: '' },
+                                        { id: 'whatsapp', icon: MessageSquare, label: 'WhatsApp\n(Twilio)', color: 'text-emerald-400', bg: 'from-emerald-500/20 to-green-600/20' },
+                                    ].map((item) =>
                                         item.bg ? (
-                                            <div key={i} className={`glass-card p-4 text-center bg-gradient-to-br ${item.bg}`}>
+                                            <div key={item.id} className={`glass-card p-4 text-center bg-gradient-to-br ${item.bg}`}>
                                                 <item.icon className={`w-8 h-8 mx-auto mb-2 ${item.color}`} />
                                                 <p className="text-xs text-white/70 whitespace-pre-line">{item.label}</p>
                                             </div>
                                         ) : (
-                                            <div key={i} className="hidden md:flex items-center justify-center">
+                                            <div key={item.id} className="hidden md:flex items-center justify-center">
                                                 <ChevronRight className="w-6 h-6 text-white/20" />
                                             </div>
                                         )

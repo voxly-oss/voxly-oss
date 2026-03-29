@@ -11,7 +11,7 @@ CRUD operations for API keys:
 """
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import Annotated, Optional
 
 from app.database import get_db
 from app.models.user import User
@@ -32,6 +32,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+API_KEY_NOT_FOUND = "API key not found"
 
 
 def _get_max_api_keys(user: User, db: Session) -> int:
@@ -50,10 +51,10 @@ def _get_max_api_keys(user: User, db: Session) -> int:
 
 
 @router.post("/", response_model=APIKeyCreatedResponse, status_code=status.HTTP_201_CREATED)
-async def create_api_key(
+async def create_api_key(*, 
     request: APIKeyCreate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db: Annotated[Session , Depends(get_db)],
+    current_user: Annotated[User , Depends(get_current_user)]
 ):
     """Generate a new API key. The full key is returned ONLY in this response."""
     
@@ -105,9 +106,9 @@ async def create_api_key(
 
 
 @router.get("/", response_model=APIKeyListResponse)
-async def list_api_keys(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+async def list_api_keys(*, 
+    db: Annotated[Session , Depends(get_db)],
+    current_user: Annotated[User , Depends(get_current_user)]
 ):
     """List all API keys for the current user."""
     keys = db.query(APIKey).filter(
@@ -123,11 +124,15 @@ async def list_api_keys(
     )
 
 
-@router.get("/{key_id}", response_model=APIKeyResponse)
-async def get_api_key(
+@router.get(
+    "/{key_id}",
+    response_model=APIKeyResponse,
+    responses={404: {"description": API_KEY_NOT_FOUND}},
+)
+async def get_api_key(*, 
     key_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db: Annotated[Session , Depends(get_db)],
+    current_user: Annotated[User , Depends(get_current_user)]
 ):
     """Get details for a specific API key."""
     api_key = db.query(APIKey).filter(
@@ -136,17 +141,21 @@ async def get_api_key(
     ).first()
     
     if not api_key:
-        raise HTTPException(status_code=404, detail="API key not found")
+        raise HTTPException(status_code=404, detail=API_KEY_NOT_FOUND)
     
     return APIKeyResponse.model_validate(api_key)
 
 
-@router.patch("/{key_id}", response_model=APIKeyResponse)
-async def update_api_key(
+@router.patch(
+    "/{key_id}",
+    response_model=APIKeyResponse,
+    responses={404: {"description": API_KEY_NOT_FOUND}},
+)
+async def update_api_key(*, 
     key_id: str,
     request: APIKeyUpdate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db: Annotated[Session , Depends(get_db)],
+    current_user: Annotated[User , Depends(get_current_user)]
 ):
     """Update API key label or scopes."""
     api_key = db.query(APIKey).filter(
@@ -155,7 +164,7 @@ async def update_api_key(
     ).first()
     
     if not api_key:
-        raise HTTPException(status_code=404, detail="API key not found")
+        raise HTTPException(status_code=404, detail=API_KEY_NOT_FOUND)
     
     if request.label is not None:
         api_key.label = request.label
@@ -168,11 +177,15 @@ async def update_api_key(
     return APIKeyResponse.model_validate(api_key)
 
 
-@router.delete("/{key_id}", status_code=status.HTTP_200_OK)
-async def revoke_api_key(
+@router.delete(
+    "/{key_id}",
+    status_code=status.HTTP_200_OK,
+    responses={404: {"description": API_KEY_NOT_FOUND}},
+)
+async def revoke_api_key(*, 
     key_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db: Annotated[Session , Depends(get_db)],
+    current_user: Annotated[User , Depends(get_current_user)]
 ):
     """Revoke (soft-delete) an API key."""
     api_key = db.query(APIKey).filter(
@@ -181,11 +194,11 @@ async def revoke_api_key(
     ).first()
     
     if not api_key:
-        raise HTTPException(status_code=404, detail="API key not found")
+        raise HTTPException(status_code=404, detail=API_KEY_NOT_FOUND)
     
-    from datetime import datetime
+    from datetime import datetime, timezone
     api_key.is_active = False
-    api_key.revoked_at = datetime.utcnow()
+    api_key.revoked_at = datetime.now(timezone.utc)
     db.commit()
     
     logger.info(f"API key revoked: {api_key.key_prefix}...")
@@ -193,11 +206,15 @@ async def revoke_api_key(
     return {"message": "API key revoked successfully", "key_prefix": api_key.key_prefix}
 
 
-@router.post("/{key_id}/rotate", response_model=APIKeyCreatedResponse)
-async def rotate_api_key(
+@router.post(
+    "/{key_id}/rotate",
+    response_model=APIKeyCreatedResponse,
+    responses={404: {"description": "Active API key not found"}},
+)
+async def rotate_api_key(*, 
     key_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db: Annotated[Session , Depends(get_db)],
+    current_user: Annotated[User , Depends(get_current_user)]
 ):
     """Rotate an API key — revokes the old key and creates a new one with the same settings."""
     old_key = db.query(APIKey).filter(
@@ -209,11 +226,11 @@ async def rotate_api_key(
     if not old_key:
         raise HTTPException(status_code=404, detail="Active API key not found")
     
-    from datetime import datetime
+    from datetime import datetime, timezone
     
     # Revoke old key
     old_key.is_active = False
-    old_key.revoked_at = datetime.utcnow()
+    old_key.revoked_at = datetime.now(timezone.utc)
     
     # Create new key with same settings
     full_key, key_prefix, key_hash = generate_api_key()

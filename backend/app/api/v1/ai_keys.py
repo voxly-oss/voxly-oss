@@ -7,8 +7,8 @@ so the platform uses their key for AI responses.
 
 import logging
 import base64
-from datetime import datetime
-from typing import List, Optional
+from datetime import datetime, timezone
+from typing import Annotated, List, Optional
 import hashlib
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -144,12 +144,12 @@ class AIKeyResponse(BaseModel):
     id: str
     provider: str
     provider_name: str
-    label: Optional[str]
+    label: Optional[str] = None
     key_masked: str
     is_active: bool
-    is_valid: Optional[bool]
-    last_validated_at: Optional[str]
-    last_used_at: Optional[str]
+    is_valid: Optional[bool] = None
+    last_validated_at: Optional[str] = None
+    last_used_at: Optional[str] = None
     created_at: str
 
 
@@ -165,9 +165,9 @@ class AIKeyProviderInfo(BaseModel):
 # ─── Routes ───
 
 @router.get("/providers", response_model=List[AIKeyProviderInfo])
-async def list_providers(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+async def list_providers(*, 
+    current_user: Annotated[User , Depends(get_current_user)],
+    db: Annotated[Session , Depends(get_db)],
 ):
     """List all supported AI providers and whether the user has a key for each."""
     user_keys = db.query(UserAIKey).filter(
@@ -190,9 +190,9 @@ async def list_providers(
 
 
 @router.get("/", response_model=List[AIKeyResponse])
-async def list_ai_keys(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+async def list_ai_keys(*, 
+    current_user: Annotated[User , Depends(get_current_user)],
+    db: Annotated[Session , Depends(get_db)],
 ):
     """List all user AI keys (masked)."""
     keys = db.query(UserAIKey).filter(
@@ -216,11 +216,16 @@ async def list_ai_keys(
     ]
 
 
-@router.post("/", response_model=AIKeyResponse, status_code=status.HTTP_201_CREATED)
-async def add_ai_key(
+@router.post(
+    "/",
+    response_model=AIKeyResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={400: {"description": "Unsupported provider"}},
+)
+async def add_ai_key(*, 
     data: AIKeyCreate,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    current_user: Annotated[User , Depends(get_current_user)],
+    db: Annotated[Session , Depends(get_db)],
 ):
     """Add or replace an AI API key for a provider."""
     if data.provider not in SUPPORTED_PROVIDERS:
@@ -238,7 +243,7 @@ async def add_ai_key(
     
     if existing:
         existing.is_active = False
-        existing.updated_at = datetime.utcnow()
+        existing.updated_at = datetime.now(timezone.utc)
     
     # Create new key
     new_key = UserAIKey(
@@ -268,11 +273,15 @@ async def add_ai_key(
     )
 
 
-@router.delete("/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_ai_key(
+@router.delete(
+    "/{key_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={404: {"description": "AI key not found"}},
+)
+async def delete_ai_key(*, 
     key_id: str,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    current_user: Annotated[User , Depends(get_current_user)],
+    db: Annotated[Session , Depends(get_db)],
 ):
     """Delete (deactivate) an AI key."""
     key = db.query(UserAIKey).filter(
@@ -284,17 +293,20 @@ async def delete_ai_key(
         raise HTTPException(status_code=404, detail="AI key not found")
     
     key.is_active = False
-    key.updated_at = datetime.utcnow()
+    key.updated_at = datetime.now(timezone.utc)
     db.commit()
     
     logger.info(f"User {current_user.email} deleted {key.provider} AI key")
 
 
-@router.post("/{key_id}/validate")
-async def validate_ai_key(
+@router.post(
+    "/{key_id}/validate",
+    responses={404: {"description": "AI key not found"}},
+)
+async def validate_ai_key(*, 
     key_id: str,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    current_user: Annotated[User , Depends(get_current_user)],
+    db: Annotated[Session , Depends(get_db)],
 ):
     """Validate an AI key by making a test API call."""
     key = db.query(UserAIKey).filter(
@@ -319,13 +331,20 @@ async def validate_ai_key(
         is_valid = False
     
     key.is_valid = is_valid
-    key.last_validated_at = datetime.utcnow()
-    key.updated_at = datetime.utcnow()
+    key.last_validated_at = datetime.now(timezone.utc)
+    key.updated_at = datetime.now(timezone.utc)
     db.commit()
+
+    if is_valid:
+        message = "Key is valid ✅"
+    elif is_valid is None:
+        message = "Provider not available yet"
+    else:
+        message = "Key is invalid or expired ❌"
     
     return {
         "id": str(key.id),
         "provider": key.provider,
         "is_valid": is_valid,
-        "message": "Key is valid ✅" if is_valid else ("Provider not available yet" if is_valid is None else "Key is invalid or expired ❌"),
+        "message": message,
     }

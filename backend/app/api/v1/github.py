@@ -17,6 +17,9 @@ import urllib.parse
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+GITHUB_LOG_HOSTS = {"api.github.com", "pipelines.actions.githubusercontent.com"}
+REDIRECT_LOG_HOSTS = GITHUB_LOG_HOSTS | {"objects.githubusercontent.com"}
+MAX_UNCOMPRESSED_LOG_BYTES = 50 * 1024 * 1024
 
 
 def _verify_github_signature(payload_body: bytes, signature_header: str | None) -> bool:
@@ -35,7 +38,72 @@ def _verify_github_signature(payload_body: bytes, signature_header: str | None) 
     return hmac.compare_digest(expected, signature_header)
 
 
-@router.post("/webhook")
+def _is_allowed_github_url(url: str, allowed_hosts: set[str], error_message: str) -> bool:
+    try:
+        parsed = urllib.parse.urlparse(url)
+        host = parsed.netloc.lower().split(":")[0]
+        return parsed.scheme == "https" and any(
+            host == allowed_host or host.endswith("." + allowed_host)
+            for allowed_host in allowed_hosts
+        )
+    except Exception:
+        logger.error(error_message)
+        return False
+
+
+async def _fetch_log_archive(
+    client: httpx.AsyncClient,
+    logs_url: str,
+    headers: dict[str, str],
+) -> httpx.Response | None:
+    response = await client.get(logs_url, headers=headers)
+    if response.status_code not in (301, 302, 307, 308):
+        return response
+
+    redirect_url = response.headers.get("location", "")
+    if not _is_allowed_github_url(
+        redirect_url,
+        REDIRECT_LOG_HOSTS,
+        "Could not parse redirect URL — blocked",
+    ):
+        logger.error(f"Redirect to untrusted host blocked: {redirect_url}")
+        return None
+    return await client.get(redirect_url, headers=headers)
+
+
+def _extract_relevant_log_content(content: bytes) -> str:
+    try:
+        with zipfile.ZipFile(io.BytesIO(content)) as archive:
+            relevant_content = ""
+            total_extracted = 0
+            for name in archive.namelist():
+                if "/" in name:
+                    continue
+                info = archive.getinfo(name)
+                if total_extracted + info.file_size > MAX_UNCOMPRESSED_LOG_BYTES:
+                    logger.warning("Log zip decompression limit reached — stopping")
+                    break
+                try:
+                    with archive.open(name) as log_file:
+                        text = log_file.read().decode("utf-8", errors="ignore")
+                        total_extracted += info.file_size
+                        if "Error:" in text or "Failure" in text or "failed" in text:
+                            relevant_content += f"\n--- {name} ---\n{text[-2000:]}"
+                except Exception:
+                    continue
+            return relevant_content[:4000]
+    except Exception as exc:
+        logger.error(f"Error unzipping logs: {exc}")
+        return ""
+
+
+@router.post(
+    "/webhook",
+    responses={
+        401: {"description": "Invalid webhook signature"},
+        500: {"description": "Webhook processing failed"},
+    },
+)
 async def github_webhook(request: Request, background_tasks: BackgroundTasks):
     """
     Handle GitHub Webhooks.
@@ -163,9 +231,9 @@ async def analyze_build_failure(payload: dict):
     analysis_prompt = (
         f"The build for {repo_full_name} failed.\n"
         f"Commit: {commit_msg}\n\n"
-        f"Here are the tail logs from the failure:\n"
+        "Here are the tail logs from the failure:\n"
         f"```\n{logs_content}\n```\n\n"
-        f"Explain why it failed and suggest a fix in 1-2 sentences."
+        "Explain why it failed and suggest a fix in 1-2 sentences."
     )
 
     response = await agent.chat(
@@ -225,17 +293,12 @@ async def fetch_workflow_logs(logs_url: str | None) -> str:
         return ""
 
     # FIX #5: Allowlist — only fetch from GitHub API hosts to prevent SSRF.
-    try:
-        parsed = urllib.parse.urlparse(logs_url)
-        host = parsed.netloc.lower().split(":")[0]
-        GITHUB_HOSTS = {"api.github.com", "pipelines.actions.githubusercontent.com"}
-        if parsed.scheme not in ("https",) or not any(
-            host == h or host.endswith("." + h) for h in GITHUB_HOSTS
-        ):
-            logger.error(f"fetch_workflow_logs: rejected non-GitHub URL: {logs_url}")
-            return ""
-    except Exception:
-        logger.error(f"fetch_workflow_logs: invalid logs_url — skipping")
+    if not _is_allowed_github_url(
+        logs_url,
+        GITHUB_LOG_HOSTS,
+        "fetch_workflow_logs: invalid logs_url — skipping",
+    ):
+        logger.error(f"fetch_workflow_logs: rejected non-GitHub URL: {logs_url}")
         return ""
 
     token = os.getenv("GITHUB_TOKEN")
@@ -246,54 +309,12 @@ async def fetch_workflow_logs(logs_url: str | None) -> str:
     # FIX #3b: Explicit 30s timeout + FIX #5: no follow_redirects to prevent open-redirect SSRF.
     async with httpx.AsyncClient(follow_redirects=False, timeout=30.0) as client:
         headers = {"Authorization": f"Bearer {token}"}
-        resp = await client.get(logs_url, headers=headers)
-
-        # Handle GitHub's redirect to the actual log zip
-        if resp.status_code in (301, 302, 307, 308):
-            redirect_url = resp.headers.get("location", "")
-            try:
-                rp = urllib.parse.urlparse(redirect_url)
-                rh = rp.netloc.lower().split(":")[0]
-                if rp.scheme != "https" or not any(
-                    rh == h or rh.endswith("." + h)
-                    for h in GITHUB_HOSTS | {"objects.githubusercontent.com"}
-                ):
-                    logger.error(f"Redirect to untrusted host blocked: {redirect_url}")
-                    return ""
-            except Exception:
-                logger.error("Could not parse redirect URL — blocked")
-                return ""
-            resp = await client.get(redirect_url, headers=headers)
+        resp = await _fetch_log_archive(client, logs_url, headers)
+        if resp is None:
+            return ""
 
         if resp.status_code != 200:
             logger.error(f"Error fetching logs: {resp.status_code}")
             return ""
 
-        # FIX #6: Zip bomb guard — limit total uncompressed size to 50 MB.
-        MAX_UNCOMPRESSED = 50 * 1024 * 1024  # 50 MB
-        try:
-            with zipfile.ZipFile(io.BytesIO(resp.content)) as z:
-                file_names = z.namelist()
-                content = ""
-                total_extracted = 0
-                for name in file_names:
-                    if "/" in name:
-                        continue
-                    info = z.getinfo(name)
-                    if total_extracted + info.file_size > MAX_UNCOMPRESSED:
-                        logger.warning("Log zip decompression limit reached — stopping")
-                        break
-                    try:
-                        with z.open(name) as f:
-                            text = f.read().decode("utf-8", errors="ignore")
-                            total_extracted += info.file_size
-                            if "Error:" in text or "Failure" in text or "failed" in text:
-                                content += f"\n--- {name} ---\n{text[-2000:]}"
-                    except Exception:
-                        continue
-
-                return content[:4000]
-
-        except Exception as e:
-            logger.error(f"Error unzipping logs: {e}")
-            return ""
+        return _extract_relevant_log_content(resp.content)

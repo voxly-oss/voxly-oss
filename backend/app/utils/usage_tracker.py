@@ -26,7 +26,6 @@ class UsageTracker:
         user_id: str,
         api_key_id: Optional[str],
         endpoint: str,
-        method: str
     ):
         """
         Track a single API request.
