@@ -183,3 +183,4 @@ groq.svg
 
 # ─── Local Scripts ───
 scripts/sonar-fetch.py
+scripts/fix_issues.py

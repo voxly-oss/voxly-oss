@@ -301,7 +301,7 @@ async def github_callback(*,
 async def register(*, 
     request: Request,
     user_data: UserCreate,
-    db: Annotated[Session , Depends(get_db)]
+    db: Annotated[Session , Depends(get_db)],
 ):
     """Register a new user."""
     # Check if email already exists
@@ -341,7 +341,7 @@ async def register(*,
 async def login(*, 
     request: Request,
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
-    db: Annotated[Session , Depends(get_db)]
+    db: Annotated[Session , Depends(get_db)],
 ):
     """Authenticate user and return JWT token."""
     # Find user by email (username field contains email)
@@ -372,7 +372,7 @@ async def login(*,
 
 @router.post("/refresh", response_model=Token)
 async def refresh_token(*, 
-    current_user: Annotated[User , Depends(get_current_user)]
+    current_user: Annotated[User , Depends(get_current_user)],
 ):
     """Refresh the access token."""
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -386,7 +386,7 @@ async def refresh_token(*,
 
 @router.get("/me", response_model=UserResponse)
 async def get_me(*, 
-    current_user: Annotated[User , Depends(get_current_user)]
+    current_user: Annotated[User , Depends(get_current_user)],
 ):
     """Get current authenticated user profile."""
     return current_user
@@ -440,7 +440,7 @@ class _PasswordChange(_BaseModel):
 async def update_profile(*, 
     profile_data: _ProfileUpdate,
     db: Annotated[Session , Depends(get_db)],
-    current_user: Annotated[User , Depends(get_current_user)]
+    current_user: Annotated[User , Depends(get_current_user)],
 ):
     """Update the current user's profile (name, agency, phone)."""
     update_fields = profile_data.model_dump(exclude_unset=True)
@@ -474,7 +474,7 @@ async def update_profile(*,
 async def change_password(*, 
     password_data: _PasswordChange,
     db: Annotated[Session , Depends(get_db)],
-    current_user: Annotated[User , Depends(get_current_user)]
+    current_user: Annotated[User , Depends(get_current_user)],
 ):
     """Change the current user's password. Requires old password verification."""
     # Verify current password — constant-time comparison via bcrypt
@@ -511,7 +511,7 @@ async def request_password_reset(*,
     request: Request,
     request_data: PasswordResetRequest,
     background_tasks: BackgroundTasks,
-    db: Annotated[Session , Depends(get_db)]
+    db: Annotated[Session , Depends(get_db)],
 ):
     """
     Request a password reset. 
@@ -540,7 +540,7 @@ async def request_password_reset(*,
 @router.post("/password-reset/confirm", status_code=status.HTTP_200_OK)
 async def confirm_password_reset(*, 
     confirm_data: PasswordResetConfirm,
-    db: Annotated[Session , Depends(get_db)]
+    db: Annotated[Session , Depends(get_db)],
 ):
     """Validate token and update password."""
     email = verify_reset_token(confirm_data.token)
@@ -576,7 +576,7 @@ async def confirm_password_reset(*,
 async def export_user_data(*, 
     request: Request,
     current_user: Annotated[User , Depends(get_current_user)],
-    db: Annotated[Session , Depends(get_db)]
+    db: Annotated[Session , Depends(get_db)],
 ):
     """GDPR Endpoint: Export all user data as JSON."""
     from app.models.client import Client
@@ -635,7 +635,7 @@ async def export_user_data(*,
 async def delete_user_account(*, 
     request: Request,
     current_user: Annotated[User , Depends(get_current_user)],
-    db: Annotated[Session , Depends(get_db)]
+    db: Annotated[Session , Depends(get_db)],
 ):
     """GDPR Endpoint: Permanently and fully erase a user account."""
     try:

@@ -66,7 +66,7 @@ async def list_milestones(*,
     skip: int = 0,
     limit: int = 100,
     db: Annotated[Session , Depends(get_db)],
-    current_user: Annotated[User , Depends(get_current_user)]
+    current_user: Annotated[User , Depends(get_current_user)],
 ):
     """List all milestones for the current user's projects."""
     user_project_ids = get_user_project_ids(db, current_user.id)
@@ -90,7 +90,7 @@ async def list_milestones(*,
 async def create_milestone(*, 
     milestone_data: MilestoneCreate,
     db: Annotated[Session , Depends(get_db)],
-    current_user: Annotated[User , Depends(get_current_user)]
+    current_user: Annotated[User , Depends(get_current_user)],
 ):
     """Create a new milestone."""
     user_project_ids = get_user_project_ids(db, current_user.id)
@@ -129,7 +129,7 @@ async def create_milestone(*,
 async def get_milestone(*, 
     milestone_id: UUID,
     db: Annotated[Session , Depends(get_db)],
-    current_user: Annotated[User , Depends(get_current_user)]
+    current_user: Annotated[User , Depends(get_current_user)],
 ):
     """Get a specific milestone by ID."""
     user_project_ids = get_user_project_ids(db, current_user.id)
@@ -155,7 +155,7 @@ async def update_milestone(*,
     milestone_data: MilestoneUpdate,
     background_tasks: BackgroundTasks,
     db: Annotated[Session , Depends(get_db)],
-    current_user: Annotated[User , Depends(get_current_user)]
+    current_user: Annotated[User , Depends(get_current_user)],
 ):
     """Update a milestone."""
     user_project_ids = get_user_project_ids(db, current_user.id)
@@ -206,7 +206,7 @@ async def update_milestone(*,
 async def delete_milestone(*, 
     milestone_id: UUID,
     db: Annotated[Session , Depends(get_db)],
-    current_user: Annotated[User , Depends(get_current_user)]
+    current_user: Annotated[User , Depends(get_current_user)],
 ):
     """Delete a milestone."""
     user_project_ids = get_user_project_ids(db, current_user.id)

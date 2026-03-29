@@ -121,7 +121,7 @@ def _save_chat_history(
         503: {"description": "Twilio is not configured"},
     },
 )
-async def whatsapp_webhook(
+async def whatsapp_webhook(*, 
     request: Request,
     background_tasks: BackgroundTasks
 ):
@@ -244,6 +244,6 @@ async def process_whatsapp_message(
 
 
 @router.get("/webhook")
-async def verify_webhook(request: Request):
+async def verify_webhook(*, request: Request):
     """Twilio webhook verification endpoint."""
     return {"status": "active", "message": "WhatsApp webhook is ready"}

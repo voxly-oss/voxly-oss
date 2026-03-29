@@ -52,7 +52,7 @@ async def send_follow_up(*,
     raw_request: Request,
     background_tasks: BackgroundTasks,
     db: Annotated[Session , Depends(get_db)],
-    current_user: Annotated[User , Depends(get_current_user)]
+    current_user: Annotated[User , Depends(get_current_user)],
 ):
     """Send a custom follow-up message to a client via WhatsApp."""
     

@@ -20,7 +20,7 @@ async def list_clients(*,
     skip: int = 0,
     limit: int = 100,
     db: Annotated[Session , Depends(get_db)],
-    current_user: Annotated[User , Depends(get_current_user)]
+    current_user: Annotated[User , Depends(get_current_user)],
 ):
     """List all clients for the current user."""
     clients = (
@@ -38,7 +38,7 @@ async def create_client(*,
     client_data: ClientCreate,
     background_tasks: BackgroundTasks,
     db: Annotated[Session , Depends(get_db)],
-    current_user: Annotated[User , Depends(get_current_user)]
+    current_user: Annotated[User , Depends(get_current_user)],
 ):
     """Create a new client."""
     # Check phone uniqueness within this user's clients only
@@ -89,7 +89,7 @@ async def create_client(*,
 async def get_client(*, 
     client_id: UUID,
     db: Annotated[Session , Depends(get_db)],
-    current_user: Annotated[User , Depends(get_current_user)]
+    current_user: Annotated[User , Depends(get_current_user)],
 ):
     """Get a specific client by ID."""
     client = (
@@ -112,7 +112,7 @@ async def update_client(*,
     client_id: UUID,
     client_data: ClientUpdate,
     db: Annotated[Session , Depends(get_db)],
-    current_user: Annotated[User , Depends(get_current_user)]
+    current_user: Annotated[User , Depends(get_current_user)],
 ):
     """Update a client."""
     client = (
@@ -162,7 +162,7 @@ async def update_client(*,
 async def delete_client(*, 
     client_id: UUID,
     db: Annotated[Session , Depends(get_db)],
-    current_user: Annotated[User , Depends(get_current_user)]
+    current_user: Annotated[User , Depends(get_current_user)],
 ):
     """Delete a client."""
     client = (

@@ -28,7 +28,7 @@ async def list_projects(*,
     skip: int = 0,
     limit: int = 100,
     db: Annotated[Session , Depends(get_db)],
-    current_user: Annotated[User , Depends(get_current_user)]
+    current_user: Annotated[User , Depends(get_current_user)],
 ):
     """List all projects for the current user's clients."""
     user_client_ids = get_user_client_ids(db, current_user.id)
@@ -53,7 +53,7 @@ async def create_project(*,
     project_data: ProjectCreate,
     background_tasks: BackgroundTasks,
     db: Annotated[Session , Depends(get_db)],
-    current_user: Annotated[User , Depends(get_current_user)]
+    current_user: Annotated[User , Depends(get_current_user)],
 ):
     """Create a new project."""
     # Verify client belongs to current user
@@ -108,7 +108,7 @@ async def create_project(*,
 async def get_project(*, 
     project_id: UUID,
     db: Annotated[Session , Depends(get_db)],
-    current_user: Annotated[User , Depends(get_current_user)]
+    current_user: Annotated[User , Depends(get_current_user)],
 ):
     """Get a specific project by ID."""
     user_client_ids = get_user_client_ids(db, current_user.id)
@@ -134,7 +134,7 @@ async def update_project(*,
     project_data: ProjectUpdate,
     background_tasks: BackgroundTasks,
     db: Annotated[Session , Depends(get_db)],
-    current_user: Annotated[User , Depends(get_current_user)]
+    current_user: Annotated[User , Depends(get_current_user)],
 ):
     """Update a project."""
     user_client_ids = get_user_client_ids(db, current_user.id)
@@ -189,7 +189,7 @@ async def update_project(*,
 async def delete_project(*, 
     project_id: UUID,
     db: Annotated[Session , Depends(get_db)],
-    current_user: Annotated[User , Depends(get_current_user)]
+    current_user: Annotated[User , Depends(get_current_user)],
 ):
     """Delete a project."""
     user_client_ids = get_user_client_ids(db, current_user.id)

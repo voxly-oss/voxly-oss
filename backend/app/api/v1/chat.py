@@ -84,7 +84,7 @@ async def get_chat_history(*,
     client_id: str,
     limit: int = 50,
     db: Annotated[Session , Depends(get_db)],
-    current_user: Annotated[User , Depends(get_current_user)]
+    current_user: Annotated[User , Depends(get_current_user)],
 ):
     """
     Get chat history for a specific client.
@@ -131,7 +131,7 @@ async def get_all_messages(*,
     skip: int = 0,
     limit: int = 50,
     db: Annotated[Session , Depends(get_db)],
-    current_user: Annotated[User , Depends(get_current_user)]
+    current_user: Annotated[User , Depends(get_current_user)],
 ):
     """
     Get all chat messages across all of the user's clients.

@@ -104,7 +104,7 @@ def _extract_relevant_log_content(content: bytes) -> str:
         500: {"description": "Webhook processing failed"},
     },
 )
-async def github_webhook(request: Request, background_tasks: BackgroundTasks):
+async def github_webhook(*, request: Request, background_tasks: BackgroundTasks):
     """
     Handle GitHub Webhooks.
     Validates HMAC-SHA256 signature before processing any events.

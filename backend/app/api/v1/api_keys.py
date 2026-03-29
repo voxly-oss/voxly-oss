@@ -54,7 +54,7 @@ def _get_max_api_keys(user: User, db: Session) -> int:
 async def create_api_key(*, 
     request: APIKeyCreate,
     db: Annotated[Session , Depends(get_db)],
-    current_user: Annotated[User , Depends(get_current_user)]
+    current_user: Annotated[User , Depends(get_current_user)],
 ):
     """Generate a new API key. The full key is returned ONLY in this response."""
     
@@ -108,7 +108,7 @@ async def create_api_key(*,
 @router.get("/", response_model=APIKeyListResponse)
 async def list_api_keys(*, 
     db: Annotated[Session , Depends(get_db)],
-    current_user: Annotated[User , Depends(get_current_user)]
+    current_user: Annotated[User , Depends(get_current_user)],
 ):
     """List all API keys for the current user."""
     keys = db.query(APIKey).filter(
@@ -132,7 +132,7 @@ async def list_api_keys(*,
 async def get_api_key(*, 
     key_id: str,
     db: Annotated[Session , Depends(get_db)],
-    current_user: Annotated[User , Depends(get_current_user)]
+    current_user: Annotated[User , Depends(get_current_user)],
 ):
     """Get details for a specific API key."""
     api_key = db.query(APIKey).filter(
@@ -155,7 +155,7 @@ async def update_api_key(*,
     key_id: str,
     request: APIKeyUpdate,
     db: Annotated[Session , Depends(get_db)],
-    current_user: Annotated[User , Depends(get_current_user)]
+    current_user: Annotated[User , Depends(get_current_user)],
 ):
     """Update API key label or scopes."""
     api_key = db.query(APIKey).filter(
@@ -185,7 +185,7 @@ async def update_api_key(*,
 async def revoke_api_key(*, 
     key_id: str,
     db: Annotated[Session , Depends(get_db)],
-    current_user: Annotated[User , Depends(get_current_user)]
+    current_user: Annotated[User , Depends(get_current_user)],
 ):
     """Revoke (soft-delete) an API key."""
     api_key = db.query(APIKey).filter(
@@ -214,7 +214,7 @@ async def revoke_api_key(*,
 async def rotate_api_key(*, 
     key_id: str,
     db: Annotated[Session , Depends(get_db)],
-    current_user: Annotated[User , Depends(get_current_user)]
+    current_user: Annotated[User , Depends(get_current_user)],
 ):
     """Rotate an API key — revokes the old key and creates a new one with the same settings."""
     old_key = db.query(APIKey).filter(

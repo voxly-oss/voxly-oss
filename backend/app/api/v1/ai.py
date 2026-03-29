@@ -79,7 +79,7 @@ async def admin_chat(*,
     request: AdminChatRequest,
     raw_request: Request,
     current_user: Annotated[User , Depends(get_current_user)],
-    db: Annotated[Session , Depends(get_db)]
+    db: Annotated[Session , Depends(get_db)],
 ):
     """
     Chat endpoint for the Admin to talk to Voxly AI.

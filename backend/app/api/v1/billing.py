@@ -33,7 +33,7 @@ router = APIRouter()
 
 
 @router.get("/plans", response_model=PlanListResponse)
-async def list_plans(*, db: Annotated[Session , Depends(get_db)]):
+async def list_plans(*, db: Annotated[Session , Depends(get_db)],):
     """List all available subscription plans."""
     plans = db.query(Plan).filter(Plan.is_active == True).order_by(Plan.tier_level).all()
     return PlanListResponse(
@@ -46,7 +46,7 @@ async def list_plans(*, db: Annotated[Session , Depends(get_db)]):
 async def get_subscription(*, 
     request: Request,
     db: Annotated[Session , Depends(get_db)],
-    current_user: Annotated[User , Depends(get_current_user)]
+    current_user: Annotated[User , Depends(get_current_user)],
 ):
     """Get the current user's active subscription."""
     subscription = db.query(Subscription).filter(
@@ -74,7 +74,7 @@ async def create_checkout_session(*,
     request: Request,
     payload: CheckoutSessionRequest,
     db: Annotated[Session , Depends(get_db)],
-    current_user: Annotated[User , Depends(get_current_user)]
+    current_user: Annotated[User , Depends(get_current_user)],
 ):
     """Create a checkout session for Stripe or Razorpay."""
     
@@ -254,7 +254,7 @@ def _handle_razorpay_payment_captured(db: Session, payment: dict) -> None:
     "/webhook/stripe",
     responses={400: {"description": "Invalid signature"}},
 )
-async def stripe_webhook(*, request: Request, db: Annotated[Session , Depends(get_db)]):
+async def stripe_webhook(*, request: Request, db: Annotated[Session , Depends(get_db)],):
     """Handle Stripe webhook events (subscription created, updated, cancelled)."""
     import stripe
     stripe.api_key = settings.STRIPE_SECRET_KEY
@@ -282,7 +282,7 @@ async def stripe_webhook(*, request: Request, db: Annotated[Session , Depends(ge
     "/webhook/razorpay",
     responses={400: {"description": "Invalid signature"}},
 )
-async def razorpay_webhook(*, request: Request, db: Annotated[Session , Depends(get_db)]):
+async def razorpay_webhook(*, request: Request, db: Annotated[Session , Depends(get_db)],):
     """Handle Razorpay webhook events."""
     import razorpay
     
@@ -313,7 +313,7 @@ async def razorpay_webhook(*, request: Request, db: Annotated[Session , Depends(
 async def get_usage_stats(*, 
     request: Request,
     db: Annotated[Session , Depends(get_db)],
-    current_user: Annotated[User , Depends(get_current_user)]
+    current_user: Annotated[User , Depends(get_current_user)],
 ):
     """Get current usage statistics for the user."""
     from app.models.api_key import APIKey
@@ -384,7 +384,7 @@ async def get_usage_stats(*,
 async def create_billing_portal(*, 
     request: Request,
     db: Annotated[Session , Depends(get_db)],
-    current_user: Annotated[User , Depends(get_current_user)]
+    current_user: Annotated[User , Depends(get_current_user)],
 ):
     """Create a Stripe customer portal session for managing billing."""
     subscription = db.query(Subscription).filter(

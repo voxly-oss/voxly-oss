@@ -170,7 +170,7 @@ def _build_recent_activity(
 @router.get("/stats", response_model=DashboardStatsResponse)
 async def get_dashboard_stats(*, 
     db: Annotated[Session , Depends(get_db)],
-    current_user: Annotated[User , Depends(get_current_user)]
+    current_user: Annotated[User , Depends(get_current_user)],
 ):
     """
     Get aggregated dashboard statistics for the authenticated user.

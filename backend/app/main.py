@@ -52,7 +52,7 @@ app.add_middleware(
 
 
 @app.middleware("http")
-async def security_headers_middleware(request: Request, call_next):
+async def security_headers_middleware(*, request: Request, call_next):
     """Attach baseline security headers to every HTTP response."""
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
