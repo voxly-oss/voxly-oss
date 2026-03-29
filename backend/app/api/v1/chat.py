@@ -14,7 +14,7 @@ from app.websockets.manager import manager
 from app.rate_limit import limiter
 from app.config import settings
 from pydantic import BaseModel, ConfigDict
-from typing import Annotated, Optional
+from typing import Annotated
 import secrets
 import logging
 import json
