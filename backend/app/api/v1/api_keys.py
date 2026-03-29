@@ -11,7 +11,7 @@ CRUD operations for API keys:
 """
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from typing import Annotated, Optional
+from typing import Annotated
 
 from app.database import get_db
 from app.models.user import User
