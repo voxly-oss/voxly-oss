@@ -15,7 +15,6 @@ on:
 
 permissions:
   contents: read
-  security-events: write
 
 jobs:
   scan-backend:
@@ -39,12 +38,7 @@ jobs:
           exit-code: "0"           # report-only; never block CI
           ignore-unfixed: true     # only report vulns that have fixes
 
-      - name: Upload Trivy backend results to GitHub Security
-        uses: github/codeql-action/upload-sarif@38697555549f1db7851b81482ff19f1fa5c4fedc # v4.34.1
-        if: always()
-        with:
-          sarif_file: "trivy-backend.sarif"
-          category: "trivy-backend"
+
 
   scan-frontend:
     name: Scan Frontend Image
@@ -74,12 +68,7 @@ jobs:
           exit-code: "0"
           ignore-unfixed: true
 
-      - name: Upload Trivy frontend results to GitHub Security
-        uses: github/codeql-action/upload-sarif@38697555549f1db7851b81482ff19f1fa5c4fedc # v4.34.1
-        if: always()
-        with:
-          sarif_file: "trivy-frontend.sarif"
-          category: "trivy-frontend"
+
 
   scan-filesystem:
     name: Scan Filesystem (OS packages + IaC)
@@ -100,9 +89,4 @@ jobs:
           exit-code: "0"
           ignore-unfixed: true
 
-      - name: Upload Trivy filesystem results
-        uses: github/codeql-action/upload-sarif@38697555549f1db7851b81482ff19f1fa5c4fedc # v4.34.1
-        if: always()
-        with:
-          sarif_file: "trivy-fs.sarif"
-          category: "trivy-filesystem"
+

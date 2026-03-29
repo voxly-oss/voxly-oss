@@ -1,8 +1,8 @@
 name: "Dependency Review"
 
 on:
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
+    # Disabled: Requires GitHub Advanced Security
 
 permissions:
   contents: read
