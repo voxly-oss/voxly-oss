@@ -5,7 +5,7 @@ from app.models.user import User
 from app.utils.auth import get_current_user
 from app.services.ai_agent import VoxlyAgent
 from app.rate_limit import limiter
-from typing import Annotated, Optional, List, Dict, Any
+from typing import Annotated, Optional, List
 from pydantic import BaseModel
 import logging
 
