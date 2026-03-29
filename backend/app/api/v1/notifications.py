@@ -9,7 +9,7 @@ Endpoints for:
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status, Request
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
-from typing import Annotated, Optional
+from typing import Annotated
 from uuid import UUID
 
 from app.database import get_db
