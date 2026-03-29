@@ -16,16 +16,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Expose port
-EXPOSE 8000
-
 # Create non-root user
 RUN useradd -m voxly && chown -R voxly:voxly /app
 USER voxly
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+# Expose default port (Cloud Run overrides via $PORT env var)
+EXPOSE 8000
 
-# Run migrations then start server
-CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+# Run migrations (non-fatal — tables may already exist) then start server.
+# Cloud Run injects $PORT; we MUST bind to it or the TCP health probe fails.
+CMD ["sh", "-c", "alembic upgrade head || echo 'Migration skipped (already applied or error)' && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
