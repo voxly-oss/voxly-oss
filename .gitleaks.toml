@@ -21,4 +21,14 @@ regexes = [
     # Sonar project/organization keys (format: org_project or org/project)
     "ravin972_voxly-oss",
     "ravin972",
+    "123456789_abcdefghijklmnopqrstuvwxyz",
+    "pv_live_q7w8e9r0t1y2u3i4o5p6a7s8d9f0g1h2",
+    "vx_live_abc123",
+    "b21490214c77cdaf0bfbd97240c548edb4226d91",
+    "testpassword123",
+    "correctpassword",
+    "wrongpassword",
+    "StrongPass123",
+    "NewStrongPass456"
 ]
+
