@@ -5,7 +5,7 @@ Aggregated statistics endpoint for the authenticated user's dashboard.
 All data is scoped to the authenticated user — no cross-tenant leakage.
 """
 from datetime import datetime, timedelta, timezone
-from typing import Annotated, List, Optional
+from typing import Annotated, List
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
