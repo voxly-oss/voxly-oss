@@ -1,13 +1,8 @@
 name: "CodeQL SAST"
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-  schedule:
-    # Every Sunday at 20:30 UTC (02:00 IST Monday)
-    - cron: "30 20 * * 0"
+  workflow_dispatch:
+    # Disabled: CodeQL requires GitHub Advanced Security (Paid for Private Org Repos)
 
 permissions:
   actions: read
