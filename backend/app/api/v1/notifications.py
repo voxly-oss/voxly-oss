@@ -9,7 +9,7 @@ Endpoints for:
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status, Request
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Annotated
 from uuid import UUID
 
 from app.database import get_db
@@ -38,14 +38,21 @@ class SendMessageResponse(BaseModel):
     message: str
 
 
-@router.post("/send", response_model=SendMessageResponse)
+@router.post(
+    "/send",
+    response_model=SendMessageResponse,
+    responses={
+        400: {"description": "Client has no phone number"},
+        404: {"description": "Client not found"},
+    },
+)
 @limiter.limit("10/minute")
-async def send_follow_up(
+async def send_follow_up(*, 
     request: SendMessageRequest,
     raw_request: Request,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db: Annotated[Session , Depends(get_db)],
+    current_user: Annotated[User , Depends(get_current_user)],
 ):
     """Send a custom follow-up message to a client via WhatsApp."""
     

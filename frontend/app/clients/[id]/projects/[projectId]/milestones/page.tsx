@@ -55,6 +55,12 @@ const milestoneSchema = z.object({
 
 type MilestoneFormData = z.infer<typeof milestoneSchema>;
 
+const MILESTONE_SKELETON_KEYS = [
+    'milestone-skeleton-1',
+    'milestone-skeleton-2',
+    'milestone-skeleton-3',
+];
+
 export default function MilestonesPage() {
     const params = useParams();
     const { toast } = useToast();
@@ -188,6 +194,93 @@ export default function MilestonesPage() {
         );
     }
 
+    const milestonesContent = (() => {
+        if (milestonesLoading) {
+            return (
+                <div className="space-y-4">
+                    {MILESTONE_SKELETON_KEYS.map((skeletonKey) => (
+                        <div key={skeletonKey} className="h-24 bg-gray-100 rounded-lg animate-pulse" />
+                    ))}
+                </div>
+            );
+        }
+
+        if (milestones.length === 0) {
+            return (
+                <Card>
+                    <CardContent className="py-12 text-center">
+                        <CheckCircle2 className="w-12 h-12 mx-auto text-gray-300 mb-4" />
+                        <h3 className="font-medium text-gray-900 mb-2">No milestones yet</h3>
+                        <p className="text-gray-600 mb-4">
+                            Add milestones to track project progress
+                        </p>
+                        <Button onClick={() => setMilestoneDialogOpen(true)}>
+                            <Plus className="w-4 h-4 mr-2" />
+                            Add Milestone
+                        </Button>
+                    </CardContent>
+                </Card>
+            );
+        }
+
+        return (
+            <div className="space-y-4">
+                {milestones.map((milestone) => (
+                    <Card key={milestone.id}>
+                        <CardContent className="p-4">
+                            <div className="flex items-start justify-between gap-4">
+                                <div className="flex-1">
+                                    <div className="flex items-center gap-3 mb-2">
+                                        <h3 className="font-semibold text-gray-900">
+                                            {milestone.title}
+                                        </h3>
+                                        <Badge className={getStatusColor(milestone.status)}>
+                                            {milestone.status.replace('_', ' ')}
+                                        </Badge>
+                                    </div>
+                                    {milestone.description && (
+                                        <p className="text-sm text-gray-600 mb-3">
+                                            {milestone.description}
+                                        </p>
+                                    )}
+                                    <div className="space-y-2">
+                                        <div className="flex justify-between text-sm">
+                                            <span className="text-gray-600">Progress</span>
+                                            <span className="font-medium">{milestone.progress}%</span>
+                                        </div>
+                                        <Progress value={milestone.progress} className="h-2" />
+                                    </div>
+                                    {milestone.due_date && (
+                                        <p className="text-xs text-gray-500 mt-2">
+                                            Due: {formatDate(milestone.due_date)}
+                                        </p>
+                                    )}
+                                </div>
+                                <div className="flex gap-2">
+                                    <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        onClick={() => openEditDialog(milestone)}
+                                    >
+                                        <Pencil className="w-4 h-4" />
+                                    </Button>
+                                    <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="text-red-600"
+                                        onClick={() => deleteMilestoneMutation.mutate(milestone.id)}
+                                    >
+                                        <Trash2 className="w-4 h-4" />
+                                    </Button>
+                                </div>
+                            </div>
+                        </CardContent>
+                    </Card>
+                ))}
+            </div>
+        );
+    })();
+
     return (
         <div className="space-y-6">
             {/* Breadcrumb */}
@@ -290,82 +383,7 @@ export default function MilestonesPage() {
                 </Button>
             </div>
 
-            {milestonesLoading ? (
-                <div className="space-y-4">
-                    {[...Array(3)].map((_, i) => (
-                        <div key={i} className="h-24 bg-gray-100 rounded-lg animate-pulse" />
-                    ))}
-                </div>
-            ) : milestones.length === 0 ? (
-                <Card>
-                    <CardContent className="py-12 text-center">
-                        <CheckCircle2 className="w-12 h-12 mx-auto text-gray-300 mb-4" />
-                        <h3 className="font-medium text-gray-900 mb-2">No milestones yet</h3>
-                        <p className="text-gray-600 mb-4">
-                            Add milestones to track project progress
-                        </p>
-                        <Button onClick={() => setMilestoneDialogOpen(true)}>
-                            <Plus className="w-4 h-4 mr-2" />
-                            Add Milestone
-                        </Button>
-                    </CardContent>
-                </Card>
-            ) : (
-                <div className="space-y-4">
-                    {milestones.map((milestone) => (
-                        <Card key={milestone.id}>
-                            <CardContent className="p-4">
-                                <div className="flex items-start justify-between gap-4">
-                                    <div className="flex-1">
-                                        <div className="flex items-center gap-3 mb-2">
-                                            <h3 className="font-semibold text-gray-900">
-                                                {milestone.title}
-                                            </h3>
-                                            <Badge className={getStatusColor(milestone.status)}>
-                                                {milestone.status.replace('_', ' ')}
-                                            </Badge>
-                                        </div>
-                                        {milestone.description && (
-                                            <p className="text-sm text-gray-600 mb-3">
-                                                {milestone.description}
-                                            </p>
-                                        )}
-                                        <div className="space-y-2">
-                                            <div className="flex justify-between text-sm">
-                                                <span className="text-gray-600">Progress</span>
-                                                <span className="font-medium">{milestone.progress}%</span>
-                                            </div>
-                                            <Progress value={milestone.progress} className="h-2" />
-                                        </div>
-                                        {milestone.due_date && (
-                                            <p className="text-xs text-gray-500 mt-2">
-                                                Due: {formatDate(milestone.due_date)}
-                                            </p>
-                                        )}
-                                    </div>
-                                    <div className="flex gap-2">
-                                        <Button
-                                            variant="ghost"
-                                            size="icon"
-                                            onClick={() => openEditDialog(milestone)}
-                                        >
-                                            <Pencil className="w-4 h-4" />
-                                        </Button>
-                                        <Button
-                                            variant="ghost"
-                                            size="icon"
-                                            className="text-red-600"
-                                            onClick={() => deleteMilestoneMutation.mutate(milestone.id)}
-                                        >
-                                            <Trash2 className="w-4 h-4" />
-                                        </Button>
-                                    </div>
-                                </div>
-                            </CardContent>
-                        </Card>
-                    ))}
-                </div>
-            )}
+            {milestonesContent}
 
             {/* Add/Edit milestone dialog */}
             <Dialog open={milestoneDialogOpen} onOpenChange={closeDialog}>

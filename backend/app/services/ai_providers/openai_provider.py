@@ -7,6 +7,122 @@ from app.services.ai_providers.base import AIProvider, AIResponse, SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
 
+
+def _get_block_type(block) -> str | None:
+    if hasattr(block, "type"):
+        return block.type
+    if isinstance(block, dict):
+        return block.get("type")
+    return None
+
+
+def _get_block_value(block, attr: str, default=None):
+    if hasattr(block, attr):
+        return getattr(block, attr)
+    if isinstance(block, dict):
+        return block.get(attr, default)
+    return default
+
+
+def _build_openai_message(role: str, content) -> dict:
+    if isinstance(content, str):
+        return {"role": role, "content": content}
+
+    text_part = ""
+    tool_calls = []
+    for block in content:
+        block_type = _get_block_type(block)
+        if block_type == "text":
+            text_part += _get_block_value(block, "text", "")
+        elif block_type == "tool_use":
+            tool_calls.append(
+                {
+                    "id": _get_block_value(block, "id", ""),
+                    "type": "function",
+                    "function": {
+                        "name": _get_block_value(block, "name", ""),
+                        "arguments": json.dumps(_get_block_value(block, "input", {})),
+                    },
+                }
+            )
+
+    new_msg = {"role": role, "content": text_part}
+    if tool_calls:
+        new_msg["tool_calls"] = tool_calls
+        if not text_part:
+            new_msg["content"] = None
+    return new_msg
+
+
+def _extract_tool_result_messages(content) -> list[dict]:
+    tool_messages = []
+    if not isinstance(content, list):
+        return tool_messages
+    for block in content:
+        if _get_block_type(block) == "tool_result":
+            tool_messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": _get_block_value(block, "tool_use_id"),
+                    "content": _get_block_value(block, "content"),
+                }
+            )
+    return tool_messages
+
+
+def _to_openai_messages(messages: list, system_prompt: str) -> list[dict]:
+    openai_messages = [{"role": "system", "content": system_prompt}]
+    for msg in messages:
+        role = msg["role"]
+        content = msg["content"]
+        openai_messages.append(_build_openai_message(role, content))
+        if role == "user":
+            openai_messages.extend(_extract_tool_result_messages(content))
+    return openai_messages
+
+
+def _to_provider_response(response):
+    message = response.choices[0].message
+    content_blocks = []
+    if message.content:
+        content_blocks.append(type("TextBlock", (), {"type": "text", "text": message.content})())
+    if message.tool_calls:
+        for tool_call in message.tool_calls:
+            content_blocks.append(
+                type(
+                    "ToolUseBlock",
+                    (),
+                    {
+                        "type": "tool_use",
+                        "name": tool_call.function.name,
+                        "input": json.loads(tool_call.function.arguments),
+                        "id": tool_call.id,
+                    },
+                )()
+            )
+
+    finish_reason = response.choices[0].finish_reason
+    stop_reason = "tool_use" if finish_reason == "tool_calls" else "end_turn" if finish_reason == "stop" else finish_reason
+    usage = response.usage
+    usage_obj = type(
+        "Usage",
+        (),
+        {
+            "input_tokens": usage.prompt_tokens,
+            "output_tokens": usage.completion_tokens,
+        },
+    )()
+    return type(
+        "ProviderResponse",
+        (),
+        {
+            "content": content_blocks,
+            "stop_reason": stop_reason,
+            "usage": usage_obj,
+            "model": response.model,
+        },
+    )()
+
 class OpenAIProvider(AIProvider):
     """OpenAI (GPT-4) provider."""
     
@@ -79,104 +195,8 @@ class OpenAIProvider(AIProvider):
         Generate response using OpenAI Tools API.
         Adapts generic tool definitions to OpenAI format.
         """
-        # Convert tools to OpenAI format
         openai_tools = [tool.to_openai_schema() for tool in tools]
-        
-        # Prepare messages
-        # VoxlyAgent stores history in Anthropic format (content is list of blocks).
-        # We must convert this to OpenAI format (content=str, tool_calls=list).
-        
-        openai_messages = [{"role": "system", "content": system_prompt}]
-        
-        for msg in messages:
-            role = msg["role"]
-            content = msg["content"]
-            
-            if isinstance(content, str):
-                openai_messages.append({"role": role, "content": content})
-                continue
-                
-            # If content is list (Anthropic style)
-            if isinstance(content, list):
-                text_part = ""
-                tool_calls = []
-                
-                for block in content:
-                    if hasattr(block, "type"):
-                        b_type = block.type
-                    elif isinstance(block, dict):
-                        b_type = block.get("type")
-                    else:
-                        continue
-                        
-                    if b_type == "text":
-                        text_val = getattr(block, "text", "") if hasattr(block, "text") else block.get("text", "")
-                        text_part += text_val
-                        
-                    elif b_type == "tool_use":
-                        # Convert to OpenAI tool_call
-                        t_id = getattr(block, "id", "") if hasattr(block, "id") else block.get("id", "")
-                        t_name = getattr(block, "name", "") if hasattr(block, "name") else block.get("name", "")
-                        t_input = getattr(block, "input", {}) if hasattr(block, "input") else block.get("input", {})
-                        
-                        tool_calls.append({
-                            "id": t_id,
-                            "type": "function",
-                            "function": {
-                                "name": t_name,
-                                "arguments": json.dumps(t_input)
-                            }
-                        })
-                        
-                    elif b_type == "tool_result":
-                        # OpenAI expects tool result as separate role="tool" message
-                        # BUT VoxlyAgent appends tool_result as 'user' message with content block.
-                        # We need to handle this carefully.
-                        # Actually, OpenAI expects:
-                        # User: ...
-                        # Assistant: (tool_calls)
-                        # Tool: (result)
-                        # VoxlyAgent stores:
-                        # User: ...
-                        # Assistant: (tool_use block)
-                        # User: (tool_result block)
-                        
-                        # So if we see a 'user' message with 'tool_result' block, 
-                        # we must convert it to role="tool".
-                        pass
-
-                # Construct OpenAI Message
-                new_msg = {"role": role, "content": text_part}
-                if tool_calls:
-                    new_msg["tool_calls"] = tool_calls
-                    # OpenAI assistant message with tool_calls usually has null content or some text
-                    if not text_part:
-                        new_msg["content"] = None
-                
-                openai_messages.append(new_msg)
-            
-            # SPECIAL CASE: VoxlyAgent stores Tool Results as USER messages with tool_result block.
-            # OpenAI requires role="tool".
-            # We need to detect if the processed message was actually a tool result.
-            # In the loop above, if we found a tool_result block in a USER message, 
-            # we should add it as a SEPARATE role="tool" message.
-            
-            if role == "user" and isinstance(content, list):
-                # Check for tool_results
-                for block in content:
-                    if isinstance(block, dict) and block.get("type") == "tool_result":
-                        openai_messages.append({
-                            "role": "tool",
-                            "tool_call_id": block.get("tool_use_id"),
-                            "content": block.get("content")
-                        })
-                    # If using object access
-                    elif hasattr(block, "type") and block.type == "tool_result":
-                        openai_messages.append({
-                            "role": "tool",
-                            "tool_call_id": block.tool_use_id,
-                            "content": block.content
-                        })
+        openai_messages = _to_openai_messages(messages, system_prompt)
 
         try:
             response = await self.client.chat.completions.create(
@@ -187,58 +207,7 @@ class OpenAIProvider(AIProvider):
                 max_tokens=max_tokens
             )
             
-            message = response.choices[0].message
-            
-            # Map OpenAI response to common format expected by Agent Loop
-            # Agent expects an object with .content, .stop_reason, .usage
-            # And .content needs to be a list of blocks (Text or ToolUse)
-            
-            # OpenAI response structure:
-            # message.content (str)
-            # message.tool_calls (list)
-            
-            content_blocks = []
-            
-            if message.content:
-                # Mock Anthropic TextBlock
-                content_blocks.append(type('TextBlock', (), {'type': 'text', 'text': message.content})())
-            
-            if message.tool_calls:
-                for tc in message.tool_calls:
-                    # Mock Anthropic ToolUseBlock
-                    content_blocks.append(type('ToolUseBlock', (), {
-                        'type': 'tool_use',
-                        'name': tc.function.name,
-                        'input': json.loads(tc.function.arguments),
-                        'id': tc.id
-                    })())
-            
-            # Determine stop reason
-            stop_reason = "end_turn"
-            if response.choices[0].finish_reason == "tool_calls":
-                stop_reason = "tool_use"
-            elif response.choices[0].finish_reason == "stop":
-                stop_reason = "end_turn"
-            else:
-                stop_reason = response.choices[0].finish_reason
-
-            # Usage
-            usage = response.usage
-            # Mock Anthropic Usage
-            usage_obj = type('Usage', (), {
-                'input_tokens': usage.prompt_tokens,
-                'output_tokens': usage.completion_tokens
-            })()
-
-            # Mock Provider Response Object
-            provider_response = type('ProviderResponse', (), {
-                'content': content_blocks,
-                'stop_reason': stop_reason,
-                'usage': usage_obj,
-                'model': response.model
-            })()
-            
-            return provider_response
+            return _to_provider_response(response)
 
         except Exception as e:
             logger.error(f"OpenAI Tool Error: {e}")

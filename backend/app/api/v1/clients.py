@@ -1,6 +1,6 @@
-from typing import List
+from typing import Annotated, List
 from uuid import UUID
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -12,14 +12,15 @@ from app.schemas.client import ClientCreate, ClientUpdate, ClientResponse
 from app.utils.auth import get_current_user
 
 router = APIRouter()
+CLIENT_NOT_FOUND = "Client not found"
 
 
 @router.get("", response_model=List[ClientResponse])
-async def list_clients(
+async def list_clients(*, 
     skip: int = 0,
     limit: int = 100,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db: Annotated[Session , Depends(get_db)],
+    current_user: Annotated[User , Depends(get_current_user)],
 ):
     """List all clients for the current user."""
     clients = (
@@ -33,11 +34,11 @@ async def list_clients(
 
 
 @router.post("", response_model=ClientResponse, status_code=status.HTTP_201_CREATED)
-async def create_client(
+async def create_client(*, 
     client_data: ClientCreate,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db: Annotated[Session , Depends(get_db)],
+    current_user: Annotated[User , Depends(get_current_user)],
 ):
     """Create a new client."""
     # Check phone uniqueness within this user's clients only
@@ -85,10 +86,10 @@ async def create_client(
 
 
 @router.get("/{client_id}", response_model=ClientResponse)
-async def get_client(
+async def get_client(*, 
     client_id: UUID,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db: Annotated[Session , Depends(get_db)],
+    current_user: Annotated[User , Depends(get_current_user)],
 ):
     """Get a specific client by ID."""
     client = (
@@ -100,18 +101,18 @@ async def get_client(
     if not client:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Client not found"
+            detail=CLIENT_NOT_FOUND
         )
     
     return client
 
 
 @router.put("/{client_id}", response_model=ClientResponse)
-async def update_client(
+async def update_client(*, 
     client_id: UUID,
     client_data: ClientUpdate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db: Annotated[Session , Depends(get_db)],
+    current_user: Annotated[User , Depends(get_current_user)],
 ):
     """Update a client."""
     client = (
@@ -123,7 +124,7 @@ async def update_client(
     if not client:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Client not found"
+            detail=CLIENT_NOT_FOUND
         )
     
     # Check phone uniqueness within this user's clients only
@@ -158,10 +159,10 @@ async def update_client(
 
 
 @router.delete("/{client_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_client(
+async def delete_client(*, 
     client_id: UUID,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db: Annotated[Session , Depends(get_db)],
+    current_user: Annotated[User , Depends(get_current_user)],
 ):
     """Delete a client."""
     client = (
@@ -173,11 +174,11 @@ async def delete_client(
     if not client:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Client not found"
+            detail=CLIENT_NOT_FOUND
         )
     
     try:
-        client.deleted_at = datetime.utcnow()
+        client.deleted_at = datetime.now(timezone.utc)
         db.commit()
     except Exception as e:
         db.rollback()

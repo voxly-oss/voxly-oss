@@ -47,6 +47,14 @@ const itemVariants = {
     visible: { opacity: 1, y: 0, transition: { duration: 0.3 } },
 };
 
+const MESSAGE_SKELETON_KEYS = [
+    'message-skeleton-1',
+    'message-skeleton-2',
+    'message-skeleton-3',
+    'message-skeleton-4',
+    'message-skeleton-5',
+];
+
 /* ─── Helpers ─── */
 function formatTimestamp(dateString: string) {
     const d = new Date(dateString);
@@ -101,8 +109,8 @@ function EmptyMessages() {
 function MessageSkeleton() {
     return (
         <div className="space-y-3">
-            {[...Array(5)].map((_, i) => (
-                <div key={i} className="glass-card p-4 border border-white/5 animate-pulse">
+            {MESSAGE_SKELETON_KEYS.map((skeletonKey) => (
+                <div key={skeletonKey} className="glass-card p-4 border border-white/5 animate-pulse">
                     <div className="flex items-start gap-3">
                         <div className="w-10 h-10 rounded-xl bg-white/10 shrink-0" />
                         <div className="flex-1 space-y-2">
@@ -248,118 +256,128 @@ export default function MessagesPage() {
 
             {/* Messages List */}
             <motion.div variants={itemVariants}>
-                {isLoading ? (
-                    <MessageSkeleton />
-                ) : messages.length === 0 ? (
-                    <EmptyMessages />
-                ) : filteredMessages.length === 0 ? (
-                    <div className="text-center py-16">
-                        <Filter className="w-10 h-10 text-white/20 mx-auto mb-3" />
-                        <p className="text-white/40">
-                            No messages match your search or filter.
-                        </p>
-                    </div>
-                ) : (
-                    <AnimatePresence mode="popLayout">
-                        <div className="space-y-3">
-                            {filteredMessages.map((msg, index) => (
-                                <motion.div
-                                    key={msg.id}
-                                    initial={{ opacity: 0, y: 10 }}
-                                    animate={{ opacity: 1, y: 0 }}
-                                    exit={{ opacity: 0, y: -10 }}
-                                    transition={{ delay: index * 0.03, duration: 0.25 }}
-                                >
-                                    <Card className="glass-card border-white/5 hover:border-white/10 transition-all group">
-                                        <CardContent className="p-4">
-                                            <div className="flex items-start gap-3">
-                                                {/* Avatar */}
-                                                <div
-                                                    className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border ${
-                                                        msg.sender === 'ai'
-                                                            ? 'bg-gradient-to-br from-violet-500/20 to-blue-500/20 border-violet-500/20'
-                                                            : 'bg-gradient-to-br from-emerald-500/20 to-green-500/20 border-emerald-500/20'
-                                                    }`}
-                                                >
-                                                    {msg.sender === 'ai' ? (
-                                                        <Bot className="w-5 h-5 text-violet-400" />
-                                                    ) : (
-                                                        <UserIcon className="w-5 h-5 text-emerald-400" />
-                                                    )}
-                                                </div>
+                {(() => {
+                    if (isLoading) {
+                        return <MessageSkeleton />;
+                    }
 
-                                                {/* Content */}
-                                                <div className="flex-1 min-w-0">
-                                                    <div className="flex items-center gap-2 mb-1 flex-wrap">
-                                                        <Link
-                                                            href={`/clients/${msg.client_id}`}
-                                                            className="text-sm font-medium text-white hover:text-violet-400 transition-colors"
-                                                        >
-                                                            {msg.client_name || 'Unknown Client'}
-                                                        </Link>
-                                                        <Badge
-                                                            className={`text-[10px] px-1.5 py-0 border ${
-                                                                msg.sender === 'ai'
-                                                                    ? 'bg-violet-500/10 text-violet-400 border-violet-500/20'
-                                                                    : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                                                            }`}
-                                                        >
-                                                            {msg.sender === 'ai' ? 'AI' : 'Client'}
-                                                        </Badge>
-                                                        {msg.model_used && msg.model_used !== 'no_project' && (
-                                                            <span className="text-[10px] text-white/20">
-                                                                {msg.model_used}
-                                                            </span>
+                    if (messages.length === 0) {
+                        return <EmptyMessages />;
+                    }
+
+                    if (filteredMessages.length === 0) {
+                        return (
+                            <div className="text-center py-16">
+                                <Filter className="w-10 h-10 text-white/20 mx-auto mb-3" />
+                                <p className="text-white/40">
+                                    No messages match your search or filter.
+                                </p>
+                            </div>
+                        );
+                    }
+
+                    return (
+                        <AnimatePresence mode="popLayout">
+                            <div className="space-y-3">
+                                {filteredMessages.map((msg, index) => (
+                                    <motion.div
+                                        key={msg.id}
+                                        initial={{ opacity: 0, y: 10 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                        exit={{ opacity: 0, y: -10 }}
+                                        transition={{ delay: index * 0.03, duration: 0.25 }}
+                                    >
+                                        <Card className="glass-card border-white/5 hover:border-white/10 transition-all group">
+                                            <CardContent className="p-4">
+                                                <div className="flex items-start gap-3">
+                                                    {/* Avatar */}
+                                                    <div
+                                                        className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border ${
+                                                            msg.sender === 'ai'
+                                                                ? 'bg-gradient-to-br from-violet-500/20 to-blue-500/20 border-violet-500/20'
+                                                                : 'bg-gradient-to-br from-emerald-500/20 to-green-500/20 border-emerald-500/20'
+                                                        }`}
+                                                    >
+                                                        {msg.sender === 'ai' ? (
+                                                            <Bot className="w-5 h-5 text-violet-400" />
+                                                        ) : (
+                                                            <UserIcon className="w-5 h-5 text-emerald-400" />
                                                         )}
-                                                        <span className="text-xs text-white/30 ml-auto flex items-center gap-1 shrink-0">
-                                                            <Clock className="w-3 h-3" />
-                                                            {formatTimestamp(msg.created_at)}
-                                                        </span>
                                                     </div>
 
-                                                    {/* Client message */}
-                                                    <p className="text-sm text-white/70 mb-1">
-                                                        {truncate(msg.message, 200)}
-                                                    </p>
-
-                                                    {/* AI response preview */}
-                                                    {msg.ai_response && (
-                                                        <div className="mt-2 pl-3 border-l-2 border-violet-500/30">
-                                                            <p className="text-sm text-white/50">
-                                                                {truncate(msg.ai_response, 200)}
-                                                            </p>
+                                                    {/* Content */}
+                                                    <div className="flex-1 min-w-0">
+                                                        <div className="flex items-center gap-2 mb-1 flex-wrap">
+                                                            <Link
+                                                                href={`/clients/${msg.client_id}`}
+                                                                className="text-sm font-medium text-white hover:text-violet-400 transition-colors"
+                                                            >
+                                                                {msg.client_name || 'Unknown Client'}
+                                                            </Link>
+                                                            <Badge
+                                                                className={`text-[10px] px-1.5 py-0 border ${
+                                                                    msg.sender === 'ai'
+                                                                        ? 'bg-violet-500/10 text-violet-400 border-violet-500/20'
+                                                                        : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                                                                }`}
+                                                            >
+                                                                {msg.sender === 'ai' ? 'AI' : 'Client'}
+                                                            </Badge>
+                                                            {msg.model_used && msg.model_used !== 'no_project' && (
+                                                                <span className="text-[10px] text-white/20">
+                                                                    {msg.model_used}
+                                                                </span>
+                                                            )}
+                                                            <span className="text-xs text-white/30 ml-auto flex items-center gap-1 shrink-0">
+                                                                <Clock className="w-3 h-3" />
+                                                                {formatTimestamp(msg.created_at)}
+                                                            </span>
                                                         </div>
-                                                    )}
 
-                                                    {/* Metadata */}
-                                                    {msg.tokens_used != null && msg.tokens_used > 0 && (
-                                                        <div className="mt-2 flex items-center gap-3 text-xs text-white/20">
-                                                            <span>{msg.tokens_used} tokens</span>
-                                                        </div>
-                                                    )}
-                                                </div>
+                                                        {/* Client message */}
+                                                        <p className="text-sm text-white/70 mb-1">
+                                                            {truncate(msg.message, 200)}
+                                                        </p>
 
-                                                {/* View client link */}
-                                                <Link
-                                                    href={`/clients/${msg.client_id}`}
-                                                    className="opacity-0 group-hover:opacity-100 transition-opacity"
-                                                >
-                                                    <Button
-                                                        variant="ghost"
-                                                        size="sm"
-                                                        className="text-white/30 hover:text-white hover:bg-white/5"
+                                                        {/* AI response preview */}
+                                                        {msg.ai_response && (
+                                                            <div className="mt-2 pl-3 border-l-2 border-violet-500/30">
+                                                                <p className="text-sm text-white/50">
+                                                                    {truncate(msg.ai_response, 200)}
+                                                                </p>
+                                                            </div>
+                                                        )}
+
+                                                        {/* Metadata */}
+                                                        {msg.tokens_used != null && msg.tokens_used > 0 && (
+                                                            <div className="mt-2 flex items-center gap-3 text-xs text-white/20">
+                                                                <span>{msg.tokens_used} tokens</span>
+                                                            </div>
+                                                        )}
+                                                    </div>
+
+                                                    {/* View client link */}
+                                                    <Link
+                                                        href={`/clients/${msg.client_id}`}
+                                                        className="opacity-0 group-hover:opacity-100 transition-opacity"
                                                     >
-                                                        <ArrowUpRight className="w-4 h-4" />
-                                                    </Button>
-                                                </Link>
-                                            </div>
-                                        </CardContent>
-                                    </Card>
-                                </motion.div>
-                            ))}
-                        </div>
-                    </AnimatePresence>
-                )}
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="sm"
+                                                            className="text-white/30 hover:text-white hover:bg-white/5"
+                                                        >
+                                                            <ArrowUpRight className="w-4 h-4" />
+                                                        </Button>
+                                                    </Link>
+                                                </div>
+                                            </CardContent>
+                                        </Card>
+                                    </motion.div>
+                                ))}
+                            </div>
+                        </AnimatePresence>
+                    );
+                })()}
             </motion.div>
 
             {/* Pagination */}

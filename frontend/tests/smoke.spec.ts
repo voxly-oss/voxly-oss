@@ -30,7 +30,7 @@ test.describe('Smoke Tests', () => {
   test('unauthenticated user is redirected from /dashboard', async ({ page }) => {
     await page.goto('/dashboard');
     // Should redirect to login
-    await expect(page).toHaveURL(/login|\/$/);
+    await expect(page).toHaveURL(/(login|\/$)/);
   });
 
   test('404 page shows for unknown route', async ({ page }) => {

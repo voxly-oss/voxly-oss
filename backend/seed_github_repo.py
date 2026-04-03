@@ -11,7 +11,7 @@ try:
     if p:
         p.github_repo = "voxly-app/client-projects"
         db.commit()
-        print(f"Project updated: github_repo = voxly-app/client-projects")
+        print("Project updated: github_repo = voxly-app/client-projects")
         print(f"Project ID: {p.id}")
         print(f"Client ID: {p.client_id}")
         # Check client phone

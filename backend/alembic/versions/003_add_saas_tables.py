@@ -15,6 +15,7 @@ revision = '003_add_saas_tables'
 down_revision = '002_add_github_cache'
 branch_labels = None
 depends_on = None
+USERS_ID_FK = "users.id"
 
 
 def upgrade():
@@ -45,7 +46,7 @@ def upgrade():
         'subscriptions',
         sa.Column('id', postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column('user_id', postgresql.UUID(as_uuid=True),
-                  sa.ForeignKey('users.id', ondelete='CASCADE'), nullable=False),
+                  sa.ForeignKey(USERS_ID_FK, ondelete='CASCADE'), nullable=False),
         sa.Column('plan_id', postgresql.UUID(as_uuid=True),
                   sa.ForeignKey('plans.id', ondelete='RESTRICT'), nullable=False),
         sa.Column('status', sa.String(50), server_default='active', nullable=False),
@@ -66,7 +67,7 @@ def upgrade():
         'api_keys',
         sa.Column('id', postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column('user_id', postgresql.UUID(as_uuid=True),
-                  sa.ForeignKey('users.id', ondelete='CASCADE'), nullable=False),
+                  sa.ForeignKey(USERS_ID_FK, ondelete='CASCADE'), nullable=False),
         sa.Column('key_hash', sa.String(255), nullable=False),
         sa.Column('key_prefix', sa.String(20), nullable=False),
         sa.Column('label', sa.String(100), nullable=False),
@@ -85,7 +86,7 @@ def upgrade():
         'usage_logs',
         sa.Column('id', postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column('user_id', postgresql.UUID(as_uuid=True),
-                  sa.ForeignKey('users.id', ondelete='CASCADE'), nullable=False),
+                  sa.ForeignKey(USERS_ID_FK, ondelete='CASCADE'), nullable=False),
         sa.Column('api_key_id', postgresql.UUID(as_uuid=True),
                   sa.ForeignKey('api_keys.id', ondelete='CASCADE'), nullable=True),
         sa.Column('date', sa.Date, nullable=False),

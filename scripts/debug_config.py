@@ -24,7 +24,8 @@ try:
         # Print as JSON via model_dump if possible, or just str
         try:
             print(json.dumps(e.errors(), indent=2))
-        except:
+        except (TypeError, ValueError) as serialization_error:
+            print(f"Could not serialize validation errors: {serialization_error}")
             print(str(e))
     except Exception as e:
         print(f"Other Error: {e}")

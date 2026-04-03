@@ -1,6 +1,6 @@
-from typing import List
+from typing import Annotated, List
 from uuid import UUID
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -13,6 +13,7 @@ from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectResponse
 from app.utils.auth import get_current_user
 
 router = APIRouter()
+PROJECT_NOT_FOUND = "Project not found"
 
 
 def get_user_client_ids(db: Session, user_id: UUID) -> List[UUID]:
@@ -22,12 +23,12 @@ def get_user_client_ids(db: Session, user_id: UUID) -> List[UUID]:
 
 
 @router.get("", response_model=List[ProjectResponse])
-async def list_projects(
+async def list_projects(*, 
     client_id: UUID = None,
     skip: int = 0,
     limit: int = 100,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db: Annotated[Session , Depends(get_db)],
+    current_user: Annotated[User , Depends(get_current_user)],
 ):
     """List all projects for the current user's clients."""
     user_client_ids = get_user_client_ids(db, current_user.id)
@@ -48,11 +49,11 @@ async def list_projects(
 
 
 @router.post("", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
-async def create_project(
+async def create_project(*, 
     project_data: ProjectCreate,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db: Annotated[Session , Depends(get_db)],
+    current_user: Annotated[User , Depends(get_current_user)],
 ):
     """Create a new project."""
     # Verify client belongs to current user
@@ -104,10 +105,10 @@ async def create_project(
 
 
 @router.get("/{project_id}", response_model=ProjectResponse)
-async def get_project(
+async def get_project(*, 
     project_id: UUID,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db: Annotated[Session , Depends(get_db)],
+    current_user: Annotated[User , Depends(get_current_user)],
 ):
     """Get a specific project by ID."""
     user_client_ids = get_user_client_ids(db, current_user.id)
@@ -121,19 +122,19 @@ async def get_project(
     if not project:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found"
+            detail=PROJECT_NOT_FOUND
         )
     
     return project
 
 
 @router.put("/{project_id}", response_model=ProjectResponse)
-async def update_project(
+async def update_project(*, 
     project_id: UUID,
     project_data: ProjectUpdate,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db: Annotated[Session , Depends(get_db)],
+    current_user: Annotated[User , Depends(get_current_user)],
 ):
     """Update a project."""
     user_client_ids = get_user_client_ids(db, current_user.id)
@@ -147,7 +148,7 @@ async def update_project(
     if not project:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found"
+            detail=PROJECT_NOT_FOUND
         )
     
     # Check if status is changing to completed
@@ -185,10 +186,10 @@ async def update_project(
 
 
 @router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_project(
+async def delete_project(*, 
     project_id: UUID,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db: Annotated[Session , Depends(get_db)],
+    current_user: Annotated[User , Depends(get_current_user)],
 ):
     """Delete a project."""
     user_client_ids = get_user_client_ids(db, current_user.id)
@@ -202,11 +203,11 @@ async def delete_project(
     if not project:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found"
+            detail=PROJECT_NOT_FOUND
         )
     
     try:
-        project.deleted_at = datetime.utcnow()
+        project.deleted_at = datetime.now(timezone.utc)
         db.commit()
     except Exception as e:
         db.rollback()

@@ -3,6 +3,15 @@
 import { motion } from 'framer-motion';
 
 export default function HeroBackground() {
+    const particles = [
+        { id: 'hero-particle-1', left: '15%', top: '20%', duration: 4, delay: 0 },
+        { id: 'hero-particle-2', left: '30%', top: '45%', duration: 4.8, delay: 0.6 },
+        { id: 'hero-particle-3', left: '45%', top: '70%', duration: 5.6, delay: 1.2 },
+        { id: 'hero-particle-4', left: '60%', top: '20%', duration: 6.4, delay: 1.8 },
+        { id: 'hero-particle-5', left: '75%', top: '45%', duration: 7.2, delay: 2.4 },
+        { id: 'hero-particle-6', left: '90%', top: '70%', duration: 8, delay: 3.0 },
+    ];
+
     return (
         <div className="fixed inset-0 w-full h-full pointer-events-none z-0 overflow-hidden bg-[#050507]">
             {/* ─── 1. Deep Space Base ─── */}
@@ -68,23 +77,23 @@ export default function HeroBackground() {
 
             {/* ─── 4. Floating particles ─── */}
             <div className="absolute inset-0">
-                {[...Array(6)].map((_, i) => (
+                {particles.map((particle) => (
                     <motion.div
-                        key={i}
+                        key={particle.id}
                         className="absolute w-1 h-1 rounded-full bg-white/20"
                         style={{
-                            left: `${15 + i * 15}%`,
-                            top: `${20 + (i % 3) * 25}%`,
+                            left: particle.left,
+                            top: particle.top,
                         }}
                         animate={{
                             y: [0, -30, 0],
                             opacity: [0.2, 0.5, 0.2],
                         }}
                         transition={{
-                            duration: 4 + i * 0.8,
+                            duration: particle.duration,
                             repeat: Infinity,
                             ease: 'easeInOut',
-                            delay: i * 0.6,
+                            delay: particle.delay,
                         }}
                     />
                 ))}

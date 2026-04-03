@@ -3,6 +3,7 @@ import hmac
 import hashlib
 import json
 import asyncio
+import os
 
 async def test_webhook():
     payload = {
@@ -14,7 +15,9 @@ async def test_webhook():
     body = json.dumps(payload).encode()
     
     # Sign it exactly how github.py expects
-    secret = "b21490214c77cdaf0bfbd97240c548edb4226d91"
+    secret = os.getenv("GITHUB_WEBHOOK_SECRET")
+    if not secret:
+        raise RuntimeError("GITHUB_WEBHOOK_SECRET must be set to run this script")
     sig = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
 
     async with httpx.AsyncClient() as client:

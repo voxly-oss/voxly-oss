@@ -422,13 +422,18 @@ export default function RegisterPage() {
 
                             <p className="text-[11px] text-white/25 leading-relaxed pt-0.5">
                                 By signing up, you agree to our{' '}
-                                <a href="#" className="text-violet-400/60 hover:text-violet-400 transition-colors">
+                                <button
+                                    type="button"
+                                    className="text-violet-400/60 hover:text-violet-400 transition-colors"
+                                >
                                     Terms of Service
-                                </a>{' '}
-                                and{' '}
-                                <a href="#" className="text-violet-400/60 hover:text-violet-400 transition-colors">
+                                </button>{" and "}
+                                <button
+                                    type="button"
+                                    className="text-violet-400/60 hover:text-violet-400 transition-colors"
+                                >
                                     Privacy Policy
-                                </a>
+                                </button>
                                 .
                             </p>
 

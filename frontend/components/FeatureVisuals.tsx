@@ -111,6 +111,11 @@ export function MultiPlatformVisual() {
         { name: 'Telegram', color: 'bg-blue-500', border: 'border-blue-500/30', text: 'text-blue-400', msg: 'API v2 is live. Response time: 45ms.', delay: 0.8 },
         { name: 'Slack', color: 'bg-purple-500', border: 'border-purple-500/30', text: 'text-purple-400', msg: '#dev-updates: Build passed, deployed to staging.', delay: 1.3 },
     ];
+    const broadcastLines = [
+        { id: 'broadcast-whatsapp', y: 25, stroke: 'rgba(16,185,129,0.3)', delay: platforms[0].delay },
+        { id: 'broadcast-telegram', y: 50, stroke: 'rgba(59,130,246,0.3)', delay: platforms[1].delay },
+        { id: 'broadcast-slack', y: 75, stroke: 'rgba(168,85,247,0.3)', delay: platforms[2].delay },
+    ];
 
     return (
         <div className="w-full h-full flex items-center justify-center p-6 sm:p-10 relative overflow-hidden">
@@ -133,15 +138,15 @@ export function MultiPlatformVisual() {
 
             {/* Broadcast lines */}
             <svg className="absolute inset-0 w-full h-full pointer-events-none z-10" preserveAspectRatio="none">
-                {[25, 50, 75].map((y, i) => (
+                {broadcastLines.map((line) => (
                     <motion.line
-                        key={i}
-                        x1="15%" y1="50%" x2="55%" y2={`${y}%`}
-                        stroke={`rgba(${i === 0 ? '16,185,129' : i === 1 ? '59,130,246' : '168,85,247'},0.3)`}
+                        key={line.id}
+                        x1="15%" y1="50%" x2="55%" y2={`${line.y}%`}
+                        stroke={line.stroke}
                         strokeWidth="1" strokeDasharray="4 3"
                         initial={{ pathLength: 0, opacity: 0 }}
                         whileInView={{ pathLength: 1, opacity: 1 }}
-                        transition={{ duration: 0.8, delay: platforms[i].delay }}
+                        transition={{ duration: 0.8, delay: line.delay }}
                     />
                 ))}
             </svg>

@@ -157,119 +157,129 @@ export default function ClientsListPage() {
                 animate={{ opacity: 1, scale: 1 }}
                 transition={{ duration: 0.5, delay: 0.3 }}
             >
-                {isLoading ? (
-                    <div className="p-12 text-center">
-                        <Loader2 className="w-8 h-8 animate-spin mx-auto text-violet-500" />
-                    </div>
-                ) : filteredClients.length === 0 ? (
-                    <div className="p-12 text-center">
-                        <div className="w-16 h-16 rounded-2xl bg-white/5 flex items-center justify-center mx-auto mb-4 border border-white/10">
-                            <Users className="w-8 h-8 text-white/20" />
-                        </div>
-                        <h3 className="text-lg font-medium text-white mb-2">
-                            {searchQuery ? 'No clients found' : 'No clients yet'}
-                        </h3>
-                        <p className="text-white/40 mb-6 max-w-sm mx-auto">
-                            {searchQuery
-                                ? 'Try adjusting your search terms to find what you\'re looking for.'
-                                : 'Get started by adding your first client to manage their projects.'}
-                        </p>
-                        {!searchQuery && (
-                            <Link href="/clients/new">
-                                <Button className="bg-gradient-to-r from-violet-600 to-blue-600 hover:from-violet-500 hover:to-blue-500 text-white border-0">
-                                    <Plus className="w-4 h-4 mr-2" />
-                                    Add Client
-                                </Button>
-                            </Link>
-                        )}
-                    </div>
-                ) : (
-                    <Table>
-                        <TableHeader>
-                            <TableRow className="border-white/5 hover:bg-white/5">
-                                <TableHead className="text-white/50">Name</TableHead>
-                                <TableHead className="text-white/50">Phone</TableHead>
-                                <TableHead className="text-white/50">Email</TableHead>
-                                <TableHead className="text-white/50">Company</TableHead>
-                                <TableHead className="text-white/50">Status</TableHead>
-                                <TableHead className="text-white/50">Added</TableHead>
-                                <TableHead className="w-[50px]"></TableHead>
-                            </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                            <AnimatePresence>
-                                {filteredClients.map((client, index) => (
-                                    <motion.tr
-                                        key={client.id}
-                                        initial={{ opacity: 0, y: 10 }}
-                                        animate={{ opacity: 1, y: 0 }}
-                                        exit={{ opacity: 0, x: -10 }}
-                                        transition={{ duration: 0.3, delay: index * 0.05 }}
-                                        className="border-white/5 hover:bg-white/5 transition-colors group"
-                                    >
-                                        <TableCell>
-                                            <Link
-                                                href={`/clients/${client.id}`}
-                                                className="font-medium text-white group-hover:text-violet-400 transition-colors"
-                                            >
-                                                {client.name}
-                                            </Link>
-                                        </TableCell>
-                                        <TableCell className="text-white/60">
-                                            {formatPhone(client.phone)}
-                                        </TableCell>
-                                        <TableCell className="text-white/60">
-                                            {client.email || '—'}
-                                        </TableCell>
-                                        <TableCell className="text-white/60">
-                                            {client.company || '—'}
-                                        </TableCell>
-                                        <TableCell>
-                                            <Badge
-                                                className={client.is_active
-                                                    ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/30'
-                                                    : 'bg-white/10 text-white/50 border-white/10 hover:bg-white/20'
-                                                }
-                                            >
-                                                {client.is_active ? 'Active' : 'Inactive'}
-                                            </Badge>
-                                        </TableCell>
-                                        <TableCell className="text-white/40 text-sm">
-                                            {formatDate(client.created_at)}
-                                        </TableCell>
-                                        <TableCell>
-                                            <DropdownMenu>
-                                                <DropdownMenuTrigger asChild>
-                                                    <Button variant="ghost" size="icon" className="hover:bg-white/10 text-white/50 hover:text-white">
-                                                        <MoreVertical className="w-4 h-4" />
-                                                    </Button>
-                                                </DropdownMenuTrigger>
-                                                <DropdownMenuContent align="end" className="glass border-white/10">
-                                                    <DropdownMenuItem asChild className="hover:bg-white/5 focus:bg-white/5 cursor-pointer">
-                                                        <Link href={`/clients/${client.id}`} className="text-white/70">
-                                                            <Pencil className="w-4 h-4 mr-2" />
-                                                            Edit
-                                                        </Link>
-                                                    </DropdownMenuItem>
-                                                    <DropdownMenuItem
-                                                        className="text-red-400 hover:bg-red-500/10 focus:bg-red-500/10 cursor-pointer"
-                                                        onClick={() => {
-                                                            setClientToDelete(client);
-                                                            setDeleteDialogOpen(true);
-                                                        }}
-                                                    >
-                                                        <Trash2 className="w-4 h-4 mr-2" />
-                                                        Delete
-                                                    </DropdownMenuItem>
-                                                </DropdownMenuContent>
-                                            </DropdownMenu>
-                                        </TableCell>
-                                    </motion.tr>
-                                ))}
-                            </AnimatePresence>
-                        </TableBody>
-                    </Table>
-                )}
+                {(() => {
+                    if (isLoading) {
+                        return (
+                            <div className="p-12 text-center">
+                                <Loader2 className="w-8 h-8 animate-spin mx-auto text-violet-500" />
+                            </div>
+                        );
+                    }
+
+                    if (filteredClients.length === 0) {
+                        return (
+                            <div className="p-12 text-center">
+                                <div className="w-16 h-16 rounded-2xl bg-white/5 flex items-center justify-center mx-auto mb-4 border border-white/10">
+                                    <Users className="w-8 h-8 text-white/20" />
+                                </div>
+                                <h3 className="text-lg font-medium text-white mb-2">
+                                    {searchQuery ? 'No clients found' : 'No clients yet'}
+                                </h3>
+                                <p className="text-white/40 mb-6 max-w-sm mx-auto">
+                                    {searchQuery
+                                        ? 'Try adjusting your search terms to find what you\'re looking for.'
+                                        : 'Get started by adding your first client to manage their projects.'}
+                                </p>
+                                {!searchQuery && (
+                                    <Link href="/clients/new">
+                                        <Button className="bg-gradient-to-r from-violet-600 to-blue-600 hover:from-violet-500 hover:to-blue-500 text-white border-0">
+                                            <Plus className="w-4 h-4 mr-2" />
+                                            Add Client
+                                        </Button>
+                                    </Link>
+                                )}
+                            </div>
+                        );
+                    }
+
+                    return (
+                        <Table>
+                            <TableHeader>
+                                <TableRow className="border-white/5 hover:bg-white/5">
+                                    <TableHead className="text-white/50">Name</TableHead>
+                                    <TableHead className="text-white/50">Phone</TableHead>
+                                    <TableHead className="text-white/50">Email</TableHead>
+                                    <TableHead className="text-white/50">Company</TableHead>
+                                    <TableHead className="text-white/50">Status</TableHead>
+                                    <TableHead className="text-white/50">Added</TableHead>
+                                    <TableHead className="w-[50px]"></TableHead>
+                                </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                                <AnimatePresence>
+                                    {filteredClients.map((client, index) => (
+                                        <motion.tr
+                                            key={client.id}
+                                            initial={{ opacity: 0, y: 10 }}
+                                            animate={{ opacity: 1, y: 0 }}
+                                            exit={{ opacity: 0, x: -10 }}
+                                            transition={{ duration: 0.3, delay: index * 0.05 }}
+                                            className="border-white/5 hover:bg-white/5 transition-colors group"
+                                        >
+                                            <TableCell>
+                                                <Link
+                                                    href={`/clients/${client.id}`}
+                                                    className="font-medium text-white group-hover:text-violet-400 transition-colors"
+                                                >
+                                                    {client.name}
+                                                </Link>
+                                            </TableCell>
+                                            <TableCell className="text-white/60">
+                                                {formatPhone(client.phone)}
+                                            </TableCell>
+                                            <TableCell className="text-white/60">
+                                                {client.email || '—'}
+                                            </TableCell>
+                                            <TableCell className="text-white/60">
+                                                {client.company || '—'}
+                                            </TableCell>
+                                            <TableCell>
+                                                <Badge
+                                                    className={client.is_active
+                                                        ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/30'
+                                                        : 'bg-white/10 text-white/50 border-white/10 hover:bg-white/20'
+                                                    }
+                                                >
+                                                    {client.is_active ? 'Active' : 'Inactive'}
+                                                </Badge>
+                                            </TableCell>
+                                            <TableCell className="text-white/40 text-sm">
+                                                {formatDate(client.created_at)}
+                                            </TableCell>
+                                            <TableCell>
+                                                <DropdownMenu>
+                                                    <DropdownMenuTrigger asChild>
+                                                        <Button variant="ghost" size="icon" className="hover:bg-white/10 text-white/50 hover:text-white">
+                                                            <MoreVertical className="w-4 h-4" />
+                                                        </Button>
+                                                    </DropdownMenuTrigger>
+                                                    <DropdownMenuContent align="end" className="glass border-white/10">
+                                                        <DropdownMenuItem asChild className="hover:bg-white/5 focus:bg-white/5 cursor-pointer">
+                                                            <Link href={`/clients/${client.id}`} className="text-white/70">
+                                                                <Pencil className="w-4 h-4 mr-2" />
+                                                                Edit
+                                                            </Link>
+                                                        </DropdownMenuItem>
+                                                        <DropdownMenuItem
+                                                            className="text-red-400 hover:bg-red-500/10 focus:bg-red-500/10 cursor-pointer"
+                                                            onClick={() => {
+                                                                setClientToDelete(client);
+                                                                setDeleteDialogOpen(true);
+                                                            }}
+                                                        >
+                                                            <Trash2 className="w-4 h-4 mr-2" />
+                                                            Delete
+                                                        </DropdownMenuItem>
+                                                    </DropdownMenuContent>
+                                                </DropdownMenu>
+                                            </TableCell>
+                                        </motion.tr>
+                                    ))}
+                                </AnimatePresence>
+                            </TableBody>
+                        </Table>
+                    );
+                })()}
             </motion.div>
 
             {/* Delete confirmation dialog */}

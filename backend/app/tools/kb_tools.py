@@ -1,7 +1,17 @@
 from typing import Any, Dict, List
 from .base import Tool
+import anyio
 import os
 import glob
+
+
+def _find_query_snippet(content: str, query: str) -> str | None:
+    lowered_query = query.lower()
+    lines = content.split("\n")
+    for index, line in enumerate(lines):
+        if lowered_query in line.lower():
+            return "\n".join(lines[max(0, index - 2):min(len(lines), index + 3)])
+    return None
 
 class LocalDocsTool(Tool):
     name = "search_local_docs"
@@ -32,19 +42,12 @@ class LocalDocsTool(Tool):
 
         for file_path in md_files:
             try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    content = f.read()
+                async with await anyio.open_file(file_path, "r", encoding="utf-8") as f:
+                    content = await f.read()
                     
-                # Simple case-insensitive search
-                if query.lower() in content.lower():
-                    # Extract snippet
-                    lines = content.split('\n')
-                    for i, line in enumerate(lines):
-                        if query.lower() in line.lower():
-                            snippet = "\n".join(lines[max(0, i-2):min(len(lines), i+3)])
-                            results.append(f"File: {file_path}\nSnippet:\n{snippet}\n---")
-                            if len(results) >= 3:  # Limit to 3 files
-                                break
+                snippet = _find_query_snippet(content, query)
+                if snippet:
+                    results.append(f"File: {file_path}\nSnippet:\n{snippet}\n---")
             except Exception as e:
                 continue
             
