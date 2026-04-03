@@ -13,6 +13,12 @@ AI-powered project management, client communication, and automated oversight for
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue?logo=docker)](docker-compose.yml)
 [![PRs Welcome](https://img.shields.io/badge/PRs-Welcome-brightgreen.svg)](CONTRIBUTING.md)
 
+[![CI](https://github.com/voxly-oss/voxly-oss/actions/workflows/ci.yml/badge.svg)](https://github.com/voxly-oss/voxly-oss/actions/workflows/ci.yml)
+[![Container Scan](https://github.com/voxly-oss/voxly-oss/actions/workflows/container-scan.yml/badge.svg)](https://github.com/voxly-oss/voxly-oss/actions/workflows/container-scan.yml)
+[![Secret Scan](https://github.com/voxly-oss/voxly-oss/actions/workflows/secret-scan.yml/badge.svg)](https://github.com/voxly-oss/voxly-oss/actions/workflows/secret-scan.yml)
+[![Security](https://github.com/voxly-oss/voxly-oss/actions/workflows/security.yml/badge.svg)](https://github.com/voxly-oss/voxly-oss/actions/workflows/security.yml)
+[![Release](https://github.com/voxly-oss/voxly-oss/actions/workflows/release.yml/badge.svg)](https://github.com/voxly-oss/voxly-oss/actions/workflows/release.yml)
+
 [Quick Start](#-quick-start) • [Features](#-features) • [Architecture](#-architecture) • [API Reference](http://localhost:8000/docs) • [Docs](https://voxly.dev/docs) • [Contributing](CONTRIBUTING.md)
 
 </div>
@@ -143,6 +149,6 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 **Built with ❤️ by the Voxly Team**
 
-[⭐ Star this repo](https://github.com/ravin972/voxly-backend) • [🐛 Report Bug](https://github.com/ravin972/voxly-backend/issues)
+[⭐ Star this repo](https://github.com/voxly-oss/voxly-oss) • [🐛 Report Bug](https://github.com/voxly-oss/voxly-oss/issues)
 
 </div>
