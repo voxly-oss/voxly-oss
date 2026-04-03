@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="./frontend/public/voxly_app_icon_1770888358855.png" alt="Voxly Logo" width="120" />
+<img src="./frontend/assets/images/voxly-logo-full.png" alt="Voxly Logo" width="120" />
 
 # 🚀 Voxly
 
