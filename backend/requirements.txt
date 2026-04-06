@@ -1,6 +1,6 @@
-fastapi==0.135.2
-uvicorn[standard]==0.42.0
-sqlalchemy==2.0.48
+fastapi==0.135.3
+uvicorn[standard]==0.43.0
+sqlalchemy==2.0.49
 alembic==1.18.4
 psycopg2-binary==2.9.11
 pydantic==2.12.5
@@ -8,7 +8,7 @@ pydantic-settings==2.13.1
 email-validator>=2.0.0
 PyJWT>=2.12.0         # replaces python-jose (CVE-2024-33664, CVE-2024-33663)
 passlib[bcrypt]==1.7.4
-python-multipart==0.0.22
+python-multipart==0.0.24
 python-dotenv==1.2.2
 cryptography>=46.0.5      # direct dep (ai_keys.py) + Snyk security pin
 google-auth>=2.28.0       # direct dep (auth.py Google OAuth)
