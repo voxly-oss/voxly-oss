@@ -10,6 +10,7 @@ class ClientBase(BaseModel):
     phone: str
     email: Optional[EmailStr] = None
     company: Optional[str] = None
+    telegram_chat_id: Optional[str] = None
 
 
 class ClientCreate(ClientBase):
@@ -23,6 +24,7 @@ class ClientUpdate(BaseModel):
     phone: Optional[str] = None
     email: Optional[EmailStr] = None
     company: Optional[str] = None
+    telegram_chat_id: Optional[str] = None
     is_active: Optional[bool] = None
 
 

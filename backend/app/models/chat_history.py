@@ -18,6 +18,7 @@ class ChatHistory(Base):
     response = Column(Text, nullable=False)
     tokens_used = Column(Integer, default=0)
     model_used = Column(String(100), nullable=True)
+    channel = Column(String(20), default="whatsapp", nullable=False, index=True)  # "whatsapp" | "telegram"
     created_at = Column(DateTime, default=datetime.utcnow)
     
     # Relationships

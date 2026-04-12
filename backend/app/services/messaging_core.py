@@ -1,0 +1,177 @@
+"""
+Shared Messaging Core — Single AI pipeline for all channels.
+
+Both WhatsApp and Telegram handlers delegate here. This module owns:
+  - Client lookup (by phone or telegram_chat_id)
+  - Project fetch + GitHub stats
+  - AI response generation
+  - Chat history persistence
+  - WebSocket broadcast to dashboard
+"""
+import uuid
+import logging
+from typing import Optional
+
+from sqlalchemy.orm import Session
+
+from app.database import SessionLocal
+from app.models.client import Client
+from app.models.project import Project
+from app.models.milestone import Milestone
+from app.models.chat_history import ChatHistory
+from app.services.ai_service import generate_client_response
+from app.services.cache_service import get_github_stats_cached
+from app.websockets.manager import manager
+
+logger = logging.getLogger(__name__)
+
+
+# ── Client lookup ──────────────────────────────────────────────────────────────
+
+def find_client_by_phone(db: Session, phone: str) -> Optional[Client]:
+    """Look up client by phone number (WhatsApp identifier)."""
+    return db.query(Client).filter(Client.phone == phone).first()
+
+
+def find_client_by_telegram(db: Session, chat_id: str) -> Optional[Client]:
+    """Look up client by Telegram chat ID."""
+    return db.query(Client).filter(Client.telegram_chat_id == str(chat_id)).first()
+
+
+# ── Shared helpers ─────────────────────────────────────────────────────────────
+
+def _get_client_project(db: Session, client: Client) -> Optional[Project]:
+    """Get the active project for a client, falling back to any project."""
+    project = (
+        db.query(Project)
+        .filter(Project.client_id == client.id, Project.status == "active")
+        .first()
+    )
+    if project:
+        return project
+    return db.query(Project).filter(Project.client_id == client.id).first()
+
+
+async def _get_project_github_stats(project: Optional[Project]) -> dict:
+    if not project or not project.github_repo:
+        return {}
+    try:
+        return await get_github_stats_cached(str(project.id), project.github_repo)
+    except Exception:
+        return {}
+
+
+def _serialize_project_milestones(db: Session, project: Optional[Project]) -> list[dict]:
+    if not project:
+        return []
+    ms_rows = db.query(Milestone).filter(Milestone.project_id == project.id).all()
+    return [
+        {
+            "title": m.title,
+            "status": m.status,
+            "progress": getattr(m, "progress", 0),
+            "due_date": str(m.due_date) if getattr(m, "due_date", None) else None,
+        }
+        for m in ms_rows
+    ]
+
+
+def _save_chat_history(
+    db: Session,
+    client: Client,
+    project: Optional[Project],
+    message: str,
+    reply: str,
+    ai_result: dict,
+    channel: str,
+) -> None:
+    if not project:
+        return
+    try:
+        chat_entry = ChatHistory(
+            id=uuid.uuid4(),
+            client_id=client.id,
+            project_id=project.id,
+            message=message or "",
+            response=reply,
+            tokens_used=ai_result.get("tokens_used", 0),
+            model_used=ai_result.get("model", "unknown"),
+            channel=channel,
+        )
+        db.add(chat_entry)
+        db.commit()
+    except Exception as exc:
+        logger.error(f"Failed to save chat history: {exc}")
+
+
+async def _broadcast_incoming(client: Client, message: str, channel: str) -> None:
+    """Broadcast incoming message to the tenant's dashboard via WebSocket."""
+    try:
+        await manager.broadcast(
+            {
+                "type": "incoming_message",
+                "message": {
+                    "client_id": str(client.id),
+                    "client_name": client.name,
+                    "message": message,
+                    "channel": channel,
+                },
+            },
+            str(client.user_id),
+        )
+    except Exception as exc:
+        logger.error(f"WebSocket broadcast failed: {exc}")
+
+
+# ── Main pipeline ─────────────────────────────────────────────────────────────
+
+async def process_incoming_message(
+    channel: str,
+    client: Client,
+    message: str,
+    media_url: Optional[str] = None,
+) -> str:
+    """
+    Core AI pipeline shared by WhatsApp and Telegram.
+
+    Args:
+        channel: "whatsapp" or "telegram"
+        client: The resolved Client ORM object
+        message: Incoming message text
+        media_url: Optional media attachment URL
+
+    Returns:
+        The AI-generated reply string
+    """
+    db = SessionLocal()
+    try:
+        await _broadcast_incoming(client, message, channel)
+
+        project = _get_client_project(db, client)
+        project_name = project.name if project else "your project"
+        github_stats = await _get_project_github_stats(project)
+        milestones = _serialize_project_milestones(db, project)
+
+        # Call AI service
+        ai_result = await generate_client_response(
+            client_name=client.name,
+            project_name=project_name,
+            github_stats=github_stats,
+            milestones=milestones,
+            client_question=message or "Hello",
+            media_url=media_url,
+        )
+
+        reply = ai_result.get("response", "")
+        if not reply:
+            reply = "Sorry, I couldn't generate a response right now. Please try again. 🙏"
+
+        _save_chat_history(db, client, project, message, reply, ai_result, channel)
+
+        return reply
+
+    except Exception as e:
+        logger.error(f"[{channel}] Error processing message: {e}", exc_info=True)
+        return "Sorry, something went wrong. Please try again later or contact support."
+    finally:
+        db.close()

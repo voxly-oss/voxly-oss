@@ -59,6 +59,7 @@ async def create_client(*,
         phone=client_data.phone,
         email=client_data.email,
         company=client_data.company,
+        telegram_chat_id=client_data.telegram_chat_id,
     )
     
     try:
@@ -67,9 +68,21 @@ async def create_client(*,
         db.refresh(db_client)
     except Exception as e:
         db.rollback()
+        import logging
+        logging.getLogger(__name__).error(f"Failed to create client: {e}", exc_info=True)
+        # Surface the real error for unique constraint violations
+        error_msg = str(e).lower()
+        if "unique" in error_msg or "duplicate" in error_msg:
+            if "telegram" in error_msg:
+                detail = "This Telegram Chat ID is already linked to another client"
+            elif "phone" in error_msg:
+                detail = "This phone number is already in use"
+            else:
+                detail = "A unique constraint was violated"
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create client"
+            detail=f"Failed to create client: {type(e).__name__}"
         )
     
     # Send welcome notification via WhatsApp (background)

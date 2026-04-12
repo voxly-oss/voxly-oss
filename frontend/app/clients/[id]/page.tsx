@@ -44,6 +44,7 @@ import {
     Clock,
     ArrowUpRight,
     GitBranch,
+    Send,
 } from 'lucide-react';
 import Link from 'next/link';
 import { formatDate, formatPhone } from '@/lib/utils';
@@ -55,6 +56,7 @@ const editClientSchema = z.object({
     phone: z.string().min(10, 'Phone must be at least 10 digits'),
     email: z.string().email('Invalid email').optional().or(z.literal('')),
     company: z.string().optional(),
+    telegram_chat_id: z.string().optional(),
 });
 
 const projectSchema = z.object({
@@ -101,6 +103,7 @@ export default function ClientDetailPage() {
                 phone: client.phone,
                 email: client.email || '',
                 company: client.company || '',
+                telegram_chat_id: client.telegram_chat_id || '',
             }
             : undefined,
     });
@@ -352,6 +355,21 @@ export default function ClientDetailPage() {
                                             className="bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:border-violet-500/50 h-11"
                                         />
                                     </div>
+                                    <div className="space-y-2">
+                                        <Label htmlFor="telegram_chat_id" className="text-white/70 flex items-center gap-2">
+                                            <Send className="w-3.5 h-3.5 text-blue-400" />
+                                            Telegram Chat ID
+                                        </Label>
+                                        <Input
+                                            id="telegram_chat_id"
+                                            placeholder="e.g. 123456789"
+                                            {...editForm.register('telegram_chat_id')}
+                                            className="bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:border-violet-500/50 h-11"
+                                        />
+                                        <p className="text-xs text-white/40">
+                                            Client gets this by messaging your Voxly Bot with /start on Telegram
+                                        </p>
+                                    </div>
                                 </div>
                                 <div className="flex justify-end gap-3">
                                     <Button
@@ -382,7 +400,7 @@ export default function ClientDetailPage() {
                                 initial={{ opacity: 0, y: 10 }}
                                 animate={{ opacity: 1, y: 0 }}
                                 exit={{ opacity: 0, y: -10 }}
-                                className="grid md:grid-cols-2 lg:grid-cols-4 gap-6"
+                                className="grid md:grid-cols-2 lg:grid-cols-5 gap-6"
                             >
                                 <div className="flex items-center gap-3 p-4 rounded-xl bg-white/5 border border-white/5">
                                     <div className="p-2.5 bg-blue-500/10 rounded-lg border border-blue-500/20">
@@ -425,6 +443,21 @@ export default function ClientDetailPage() {
                                         >
                                             {client.is_active ? 'Active' : 'Inactive'}
                                         </Badge>
+                                    </div>
+                                </div>
+                                <div className="flex items-center gap-3 p-4 rounded-xl bg-white/5 border border-white/5">
+                                    <div className="p-2.5 bg-blue-500/10 rounded-lg border border-blue-500/20">
+                                        <Send className="w-4 h-4 text-blue-400" />
+                                    </div>
+                                    <div>
+                                        <p className="text-xs text-white/40 mb-0.5">Telegram</p>
+                                        <p className="font-medium text-white">
+                                            {client.telegram_chat_id ? (
+                                                <span className="font-mono text-sm">{client.telegram_chat_id}</span>
+                                            ) : (
+                                                <span className="text-white/30">Not linked</span>
+                                            )}
+                                        </p>
                                     </div>
                                 </div>
                             </motion.div>

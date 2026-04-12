@@ -87,6 +87,7 @@ export const clientsAPI = {
         phone: string;
         email?: string;
         company?: string;
+        telegram_chat_id?: string;
     }) => api.post('/api/v1/clients', data),
     get: (id: string) => api.get(`/api/v1/clients/${id}`),
     update: (
@@ -96,6 +97,7 @@ export const clientsAPI = {
             phone?: string;
             email?: string;
             company?: string;
+            telegram_chat_id?: string;
             is_active?: boolean;
         }
     ) => api.put(`/api/v1/clients/${id}`, data),
@@ -229,6 +231,10 @@ export const superAdminAPI = {
         api.patch(`/voxly-admin/users/${userId}/disable`, {}, { headers: { 'X-Admin-Secret': adminSecret } }),
     impersonate: (userId: string, adminSecret: string) =>
         api.post(`/voxly-admin/impersonate/${userId}`, {}, { headers: { 'X-Admin-Secret': adminSecret } }),
+    getTenantDetail: (userId: string, adminSecret: string) =>
+        api.get(`/voxly-admin/tenants/${userId}`, { headers: { 'X-Admin-Secret': adminSecret } }),
+    getActivity: (adminSecret: string, limit = 50) =>
+        api.get(`/voxly-admin/activity?limit=${limit}`, { headers: { 'X-Admin-Secret': adminSecret } }),
 };
 
 export default api;

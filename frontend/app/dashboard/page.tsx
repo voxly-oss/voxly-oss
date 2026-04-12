@@ -2,7 +2,6 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { clientsAPI, projectsAPI, dashboardAPI } from '@/lib/api';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
@@ -11,13 +10,18 @@ import {
     Users,
     FolderGit2,
     MessageSquare,
-    Zap,
     TrendingUp,
+    TrendingDown,
     Plus,
     ArrowUpRight,
     Sparkles,
     Rocket,
-    GitBranch,
+    Wifi,
+    WifiOff,
+    Bot,
+    Github,
+    Clock,
+    Minus,
 } from 'lucide-react';
 import { useRef, useEffect } from 'react';
 import SpotlightCard from '@/components/SpotlightCard';
@@ -37,8 +41,48 @@ type Project = {
     expected_end_date: string;
 };
 
+type RecentAIMessage = {
+    client_name: string;
+    provider: string;
+    response_length: number;
+    timestamp: string;
+};
+
+type DashboardStats = {
+    total_clients: number;
+    active_clients: number;
+    total_projects: number;
+    active_projects: number;
+    completed_projects: number;
+    total_messages: number;
+    messages_this_month: number;
+    messages_last_month: number;
+    clients_delta: number;
+    projects_delta: number;
+    messages_delta_pct: number;
+    recent_ai_messages: RecentAIMessage[];
+    integrations: {
+        whatsapp: boolean;
+        telegram: boolean;
+        github: boolean;
+        ai_provider: string;
+    };
+    ai_accuracy: number;
+    recent_activity: Array<{ type: string; title: string; timestamp: string }>;
+};
+
 const formatDate = (date: string) => {
     return new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+};
+
+const timeAgo = (timestamp: string): string => {
+    const diff = Date.now() - new Date(timestamp).getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    return `${Math.floor(hrs / 24)}d ago`;
 };
 
 /* ─── Animation variants ─── */
@@ -84,6 +128,25 @@ function AnimatedNumber({ value, duration = 1.5 }: { value: number; duration?: n
     }, [isInView, value, duration, motionVal]);
 
     return <motion.span ref={ref}>{display}</motion.span>;
+}
+
+/* ─── Delta badge ─── */
+function DeltaBadge({ delta, suffix = '' }: { delta: number; suffix?: string }) {
+    if (delta === 0) {
+        return (
+            <span className="flex items-center gap-1 text-xs font-medium text-white/30">
+                <Minus className="w-3 h-3" />
+                No change
+            </span>
+        );
+    }
+    const isUp = delta > 0;
+    return (
+        <span className={`flex items-center gap-1 text-xs font-medium ${isUp ? 'text-emerald-400' : 'text-red-400'}`}>
+            {isUp ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
+            {isUp ? '+' : ''}{delta}{suffix} vs last month
+        </span>
+    );
 }
 
 /* ─── Skeleton pulse row ─── */
@@ -138,6 +201,24 @@ function EmptyState({
     );
 }
 
+/* ─── Integration pill ─── */
+function IntegrationPill({ label, active, icon: Icon }: { label: string; active: boolean; icon: React.ElementType }) {
+    return (
+        <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${
+            active
+                ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
+                : 'bg-white/[0.02] border-white/5 text-white/30'
+        }`}>
+            <Icon className="w-3.5 h-3.5" />
+            {label}
+            {active
+                ? <Wifi className="w-3 h-3" />
+                : <WifiOff className="w-3 h-3" />
+            }
+        </div>
+    );
+}
+
 /* ═══════════════════ DASHBOARD PAGE ═══════════════════ */
 export default function DashboardPage() {
     const { data: clients = [], isLoading: clientsLoading } = useQuery({
@@ -160,16 +241,7 @@ export default function DashboardPage() {
         queryKey: ['dashboard-stats'],
         queryFn: async () => {
             const response = await dashboardAPI.stats();
-            return response.data as {
-                total_clients: number;
-                active_clients: number;
-                total_projects: number;
-                active_projects: number;
-                completed_projects: number;
-                total_messages: number;
-                messages_this_month: number;
-                ai_accuracy: number;
-            };
+            return response.data as DashboardStats;
         },
         staleTime: 30_000,
     });
@@ -185,8 +257,8 @@ export default function DashboardPage() {
             gradient: 'from-violet-500/20 to-purple-500/20',
             iconColor: 'text-violet-400',
             borderColor: 'border-violet-500/20',
-            trend: '+12%',
-            trendUp: true,
+            delta: dashStats?.clients_delta ?? null,
+            deltaType: 'count' as const,
         },
         {
             title: 'Active Projects',
@@ -195,8 +267,8 @@ export default function DashboardPage() {
             gradient: 'from-blue-500/20 to-cyan-500/20',
             iconColor: 'text-blue-400',
             borderColor: 'border-blue-500/20',
-            trend: '+8%',
-            trendUp: true,
+            delta: dashStats?.projects_delta ?? null,
+            deltaType: 'count' as const,
         },
         {
             title: 'Messages This Month',
@@ -205,18 +277,19 @@ export default function DashboardPage() {
             gradient: 'from-emerald-500/20 to-green-500/20',
             iconColor: 'text-emerald-400',
             borderColor: 'border-emerald-500/20',
-            trend: '+24%',
-            trendUp: true,
+            delta: dashStats?.messages_delta_pct ?? null,
+            deltaType: 'pct' as const,
         },
         {
             title: 'AI Accuracy',
-            value: dashStats?.ai_accuracy ?? 97.3,
-            icon: Zap,
+            value: dashStats?.ai_accuracy ?? 0,
+            icon: Bot,
             gradient: 'from-amber-500/20 to-yellow-500/20',
             iconColor: 'text-amber-400',
             borderColor: 'border-amber-500/20',
-            trend: '+2%',
-            trendUp: true,
+            delta: null,
+            deltaType: 'count' as const,
+            isPct: true,
         },
     ];
 
@@ -229,6 +302,9 @@ export default function DashboardPage() {
         };
         return styles[status] || styles.active;
     };
+
+    const providerLabel = dashStats?.integrations.ai_provider ?? 'none';
+    const providerActive = providerLabel !== 'none';
 
     return (
         <motion.div
@@ -267,11 +343,11 @@ export default function DashboardPage() {
                 className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4"
                 variants={itemVariants}
             >
-                {stats.map((stat, i) => {
+                {stats.map((stat) => {
                     let statValueContent = <AnimatedNumber value={stat.value} />;
                     if (isLoading) {
                         statValueContent = <span className="inline-block w-16 h-8 skeleton rounded" />;
-                    } else if (stat.title === 'AI Accuracy') {
+                    } else if (stat.isPct) {
                         statValueContent = (
                             <>
                                 <AnimatedNumber value={stat.value} />
@@ -283,7 +359,7 @@ export default function DashboardPage() {
                     return (
                         <SpotlightCard
                             key={stat.title}
-                            className={` h-full transition-all duration-300 hover:scale-[1.02] bg-[#0a0a0f]/50 border-white/5`}
+                            className={`h-full transition-all duration-300 hover:scale-[1.02] bg-[#0a0a0f]/50 border-white/5`}
                             spotlightColor="rgba(139, 92, 246, 0.15)"
                         >
                             <div className="flex items-start justify-between">
@@ -297,38 +373,72 @@ export default function DashboardPage() {
                                     <stat.icon className={`w-5 h-5 ${stat.iconColor}`} />
                                 </div>
                             </div>
-                            <div className="flex items-center gap-1.5 mt-4 text-xs font-medium">
-                                <TrendingUp className={`w-3.5 h-3.5 ${stat.trendUp ? 'text-emerald-400' : 'text-blue-400 rotate-180'}`} />
-                                <span className={stat.trendUp ? 'text-emerald-400' : 'text-blue-400'}>{stat.trend}</span>
-                                <span className="text-white/30">vs last month</span>
+                            <div className="mt-4">
+                                {isLoading ? (
+                                    <div className="h-4 w-24 skeleton rounded" />
+                                ) : stat.delta !== null ? (
+                                    <DeltaBadge delta={stat.delta} suffix={stat.deltaType === 'pct' ? '%' : ''} />
+                                ) : stat.isPct ? (
+                                    <span className="text-xs text-white/30">Based on {dashStats?.total_messages ?? 0} total messages</span>
+                                ) : null}
                             </div>
                         </SpotlightCard>
                     );
                 })}
             </motion.div>
 
-            {/* Quick actions bar */}
+            {/* Integration Status + Quick Actions */}
             <motion.div
                 className="p-4 rounded-xl border border-white/5 bg-white/[0.02] flex flex-wrap gap-3 items-center backdrop-blur-md"
                 variants={itemVariants}
             >
                 <div className="flex items-center gap-2 mr-2">
                     <Sparkles className="w-3.5 h-3.5 text-violet-400" />
-                    <span className="text-sm font-medium text-white/50">Quick actions:</span>
+                    <span className="text-sm font-medium text-white/50">Integrations:</span>
                 </div>
-                {[
-                    { label: 'New Client', href: '/clients/new', icon: Users },
-                    { label: 'New Project', href: '/projects', icon: FolderGit2 },
-                    { label: 'API Keys', href: '/settings', icon: Zap },
-                    { label: 'Connect WhatsApp', href: '/settings', icon: MessageSquare },
-                ].map((action) => (
-                    <Link key={action.label} href={action.href}>
-                        <Button variant="outline" size="sm" className="bg-white/5 border-white/5 text-white/70 hover:text-white hover:bg-white/10 hover:border-white/10 transition-all rounded-lg h-8 text-xs font-medium">
-                            <action.icon className="w-3.5 h-3.5 mr-1.5" />
-                            {action.label}
-                        </Button>
-                    </Link>
-                ))}
+                {statsLoading ? (
+                    <>
+                        <div className="h-7 w-28 skeleton rounded-lg" />
+                        <div className="h-7 w-24 skeleton rounded-lg" />
+                        <div className="h-7 w-32 skeleton rounded-lg" />
+                    </>
+                ) : (
+                    <>
+                        <IntegrationPill
+                            label="WhatsApp"
+                            active={dashStats?.integrations.whatsapp ?? false}
+                            icon={MessageSquare}
+                        />
+                        <IntegrationPill
+                            label="Telegram"
+                            active={dashStats?.integrations.telegram ?? false}
+                            icon={MessageSquare}
+                        />
+                        <IntegrationPill
+                            label="GitHub"
+                            active={dashStats?.integrations.github ?? false}
+                            icon={Github}
+                        />
+                        <IntegrationPill
+                            label={`AI: ${providerActive ? providerLabel.charAt(0).toUpperCase() + providerLabel.slice(1) : 'None'}`}
+                            active={providerActive}
+                            icon={Bot}
+                        />
+                    </>
+                )}
+                <div className="ml-auto flex gap-2">
+                    {[
+                        { label: 'New Client', href: '/clients/new', icon: Users },
+                        { label: 'Settings', href: '/settings', icon: Sparkles },
+                    ].map((action) => (
+                        <Link key={action.label} href={action.href}>
+                            <Button variant="outline" size="sm" className="bg-white/5 border-white/5 text-white/70 hover:text-white hover:bg-white/10 hover:border-white/10 transition-all rounded-lg h-8 text-xs font-medium">
+                                <action.icon className="w-3.5 h-3.5 mr-1.5" />
+                                {action.label}
+                            </Button>
+                        </Link>
+                    ))}
+                </div>
             </motion.div>
 
             {/* Recent clients & projects */}
@@ -491,6 +601,80 @@ export default function DashboardPage() {
                     </SpotlightCard>
                 </motion.div>
             </div>
+
+            {/* AI Activity Feed */}
+            <motion.div variants={itemVariants}>
+                <SpotlightCard className="bg-[#0a0a0f]/50 border-white/5 p-0 overflow-hidden">
+                    <div className="px-6 py-5 border-b border-white/5 flex items-center justify-between bg-white/[0.01]">
+                        <div>
+                            <h3 className="text-lg font-bold text-white tracking-tight flex items-center gap-2">
+                                <Bot className="w-4 h-4 text-violet-400" />
+                                Recent AI Activity
+                            </h3>
+                            <p className="text-xs text-white/40 mt-0.5">Last 5 AI interactions across your clients</p>
+                        </div>
+                        <Link href="/messages">
+                            <Button variant="ghost" size="sm" className="text-white/40 hover:text-white hover:bg-white/5 h-8 text-xs">
+                                All messages
+                                <ArrowUpRight className="w-3.5 h-3.5 ml-1" />
+                            </Button>
+                        </Link>
+                    </div>
+                    <div className="p-4">
+                        {statsLoading ? (
+                            <div className="space-y-2">
+                                {[1, 2, 3].map((k) => (
+                                    <div key={k} className="flex items-center gap-3 p-3">
+                                        <div className="w-8 h-8 rounded-lg skeleton" />
+                                        <div className="flex-1 space-y-1.5">
+                                            <div className="h-3.5 w-32 skeleton rounded" />
+                                            <div className="h-3 w-48 skeleton rounded" />
+                                        </div>
+                                        <div className="h-3 w-12 skeleton rounded" />
+                                    </div>
+                                ))}
+                            </div>
+                        ) : !dashStats?.recent_ai_messages?.length ? (
+                            <div className="text-center py-8">
+                                <div className="w-12 h-12 rounded-2xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center mx-auto mb-3">
+                                    <Bot className="w-5 h-5 text-violet-400/60" />
+                                </div>
+                                <p className="text-white/40 text-sm">No AI interactions yet</p>
+                                <p className="text-white/20 text-xs mt-1">Messages will appear here as clients interact via WhatsApp</p>
+                            </div>
+                        ) : (
+                            <div className="space-y-1">
+                                {dashStats.recent_ai_messages.map((msg, i) => (
+                                    <motion.div
+                                        key={i}
+                                        initial={{ opacity: 0, x: -10 }}
+                                        animate={{ opacity: 1, x: 0 }}
+                                        transition={{ delay: i * 0.05 }}
+                                        className="flex items-center gap-3 p-3 rounded-lg hover:bg-white/[0.03] transition-all"
+                                    >
+                                        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500/20 to-blue-500/20 border border-white/5 flex items-center justify-center flex-shrink-0">
+                                            <Bot className="w-3.5 h-3.5 text-violet-400" />
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                            <p className="text-sm font-medium text-white">
+                                                {msg.client_name}
+                                            </p>
+                                            <p className="text-xs text-white/40">
+                                                via <span className="text-violet-400/70 font-medium capitalize">{msg.provider}</span>
+                                                {' · '}{msg.response_length} chars
+                                            </p>
+                                        </div>
+                                        <div className="flex items-center gap-1 text-xs text-white/30 flex-shrink-0">
+                                            <Clock className="w-3 h-3" />
+                                            {timeAgo(msg.timestamp)}
+                                        </div>
+                                    </motion.div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </SpotlightCard>
+            </motion.div>
         </motion.div>
     );
 }
