@@ -184,3 +184,7 @@ groq.svg
 # ─── Local Scripts ───
 scripts/sonar-fetch.py
 scripts/fix_issues.py
+
+# Security scan tools & logs
+gitleaks*
+sonar-log.*

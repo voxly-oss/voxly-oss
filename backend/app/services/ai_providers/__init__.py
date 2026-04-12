@@ -25,9 +25,9 @@ PROVIDERS = {
     # "custom": CustomProvider,     # Phase 5
 }
 
-# Default provider — openai confirmed working for dogfood.
-# Priority order: Anthropic -> Gemini -> OpenAI (set in get_provider auto-detect).
-DEFAULT_PROVIDER = "openai"
+# Default provider — Gemini 2.5 Flash (free tier, no billing issues).
+# Priority order: Gemini → OpenAI (Claude removed — API billing broken since March 2026).
+DEFAULT_PROVIDER = "gemini"
 
 
 def get_provider(provider_name: str = None, api_key: str = None) -> AIProvider:
@@ -46,16 +46,16 @@ def get_provider(provider_name: str = None, api_key: str = None) -> AIProvider:
     """
     from app.config import settings
 
-    # Provider priority: Anthropic -> Gemini -> OpenAI
+    # Provider priority: Gemini → OpenAI (Claude skipped — billing 404 since March 2026)
     if not provider_name:
-        if settings.ANTHROPIC_API_KEY:
-            name = "claude"
-        elif settings.GEMINI_API_KEY:
+        if settings.GEMINI_API_KEY:
             name = "gemini"
         elif settings.OPENAI_API_KEY:
             name = "openai"
+        elif settings.ANTHROPIC_API_KEY:
+            name = "claude"
         else:
-            name = "openai"  # Default fallback
+            name = "gemini"  # Default fallback
     else:
         name = provider_name
 

@@ -37,6 +37,37 @@ OAUTH_STATE_COOKIE_PREFIX = "voxly_oauth_state_"
 USER_ACCOUNT_DEACTIVATED = "User account is deactivated"
 APPLICATION_JSON = "application/json"
 
+# ── Disposable email domain blocklist ──────────────────────────────────────────
+# Block throwaway providers. Real domains (gmail, outlook, company) are allowed.
+_DISPOSABLE_DOMAINS: frozenset[str] = frozenset({
+    "mailinator.com", "guerrillamail.com", "guerrillamail.info", "guerrillamail.biz",
+    "guerrillamail.de", "guerrillamail.net", "guerrillamail.org",
+    "temp-mail.org", "throwam.com", "yopmail.com", "yopmail.fr",
+    "sharklasers.com", "dispostable.com", "fakeinbox.com", "maildrop.cc",
+    "trashmail.com", "trashmail.me", "trashmail.net", "trashmail.io",
+    "getairmail.com", "spamgourmet.com", "10minutemail.com", "10minutemail.net",
+    "tempr.email", "mailnull.com", "mintemail.com", "mailnesia.com",
+    "spamfree24.org", "spamfree24.de", "spam4.me", "spamgob.com",
+    "burnermail.io", "throwaway.email", "tempinbox.com", "mytrashmail.com",
+    "sogetthis.com", "spamherelots.com", "discard.email", "discardmail.com",
+    "mailexpire.com", "spammotel.com", "jetable.com", "jetable.fr.nf",
+    "meltmail.com", "shredmail.com", "mailscrap.com", "spamgoes.in",
+    "filzmail.com", "wegwerfmail.de", "mailboxy.fun", "getnada.com",
+    "lsnamed.com", "abyssemail.com", "armyspy.com", "cuvox.de",
+    "dayrep.com", "einrot.com", "fleckens.hu", "gustr.com",
+    "jourrapide.com", "rhyta.com", "superrito.com", "teleworm.us",
+})
+
+
+def _validate_email_domain(email: str) -> None:
+    """Raise HTTP 422 if the email domain is a known disposable provider."""
+    domain = email.split("@")[-1].lower().strip()
+    if domain in _DISPOSABLE_DOMAINS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Disposable or temporary email addresses are not allowed. Please use a real email.",
+        )
+
 
 def _get_oauth_cookie_name(provider: str) -> str:
     return f"{OAUTH_STATE_COOKIE_PREFIX}{provider}"
@@ -131,7 +162,8 @@ async def google_auth(*,
             user.google_id = google_id
             db.commit()
         else:
-            # 3. Create new user
+            # 3. Create new user — validate domain first
+            _validate_email_domain(email)
             user = User(
                 email=email,
                 full_name=name,
@@ -269,6 +301,8 @@ async def github_callback(*,
             user.github_id = github_id
             db.commit()
         else:
+            # New user via GitHub — validate domain
+            _validate_email_domain(primary_email)
             user = User(
                 email=primary_email,
                 full_name=name,
@@ -304,6 +338,9 @@ async def register(*,
     db: Annotated[Session , Depends(get_db)],
 ):
     """Register a new user."""
+    # Block disposable email domains
+    _validate_email_domain(user_data.email)
+
     # Check if email already exists
     existing_user = db.query(User).filter(User.email == user_data.email).first()
     if existing_user:
