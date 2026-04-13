@@ -220,25 +220,42 @@ export const aiKeysAPI = {
     validate: (id: string) => api.post(`/api/v1/ai-keys/${id}/validate`),
 };
 
-// ─── Super Admin API (Voxly Owner Only) ───
+// ─── Super Admin API — uses its own axios instance (NO 401 redirect interceptor) ───
+// This is intentional: the super admin page manages its own session expiry UI.
+// Never use the shared `api` instance here or the global interceptor will redirect to /login.
+const adminApi = axios.create({
+    baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000',
+    headers: { 'Content-Type': 'application/json' },
+    timeout: 30_000,
+});
+
+// Still attach the JWT token — but NO response interceptor
+adminApi.interceptors.request.use((config) => {
+    if (typeof window !== 'undefined') {
+        const token = localStorage.getItem('access_token');
+        if (token) config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+});
+
 export const superAdminAPI = {
     getTenants: (adminSecret: string) =>
-        api.get('/voxly-admin/tenants', { headers: { 'X-Admin-Secret': adminSecret } }),
+        adminApi.get('/voxly-admin/tenants', { headers: { 'X-Admin-Secret': adminSecret } }),
     getStats: (adminSecret: string) =>
-        api.get('/voxly-admin/stats', { headers: { 'X-Admin-Secret': adminSecret } }),
+        adminApi.get('/voxly-admin/stats', { headers: { 'X-Admin-Secret': adminSecret } }),
     overridePlan: (userId: string, tier: string, adminSecret: string) =>
-        api.patch(`/voxly-admin/users/${userId}/plan`,
+        adminApi.patch(`/voxly-admin/users/${userId}/plan`,
             { subscription_tier: tier },
             { headers: { 'X-Admin-Secret': adminSecret } }
         ),
     toggleDisable: (userId: string, adminSecret: string) =>
-        api.patch(`/voxly-admin/users/${userId}/disable`, {}, { headers: { 'X-Admin-Secret': adminSecret } }),
+        adminApi.patch(`/voxly-admin/users/${userId}/disable`, {}, { headers: { 'X-Admin-Secret': adminSecret } }),
     impersonate: (userId: string, adminSecret: string) =>
-        api.post(`/voxly-admin/impersonate/${userId}`, {}, { headers: { 'X-Admin-Secret': adminSecret } }),
+        adminApi.post(`/voxly-admin/impersonate/${userId}`, {}, { headers: { 'X-Admin-Secret': adminSecret } }),
     getTenantDetail: (userId: string, adminSecret: string) =>
-        api.get(`/voxly-admin/tenants/${userId}`, { headers: { 'X-Admin-Secret': adminSecret } }),
+        adminApi.get(`/voxly-admin/tenants/${userId}`, { headers: { 'X-Admin-Secret': adminSecret } }),
     getActivity: (adminSecret: string, limit = 50) =>
-        api.get(`/voxly-admin/activity?limit=${limit}`, { headers: { 'X-Admin-Secret': adminSecret } }),
+        adminApi.get(`/voxly-admin/activity?limit=${limit}`, { headers: { 'X-Admin-Secret': adminSecret } }),
 };
 
 export default api;
