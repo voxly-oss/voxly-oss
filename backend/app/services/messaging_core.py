@@ -10,6 +10,7 @@ Both WhatsApp and Telegram handlers delegate here. This module owns:
 """
 import uuid
 import logging
+import time
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -143,8 +144,13 @@ async def process_incoming_message(
     Returns:
         The AI-generated reply string
     """
+    start_ts = time.monotonic()
     db = SessionLocal()
     try:
+        logger.info(
+            "[%s] Incoming client=%r msg_len=%d media=%s",
+            channel.upper(), client.name, len(message or ""), bool(media_url),
+        )
         await _broadcast_incoming(client, message, channel)
 
         project = _get_client_project(db, client)
@@ -152,7 +158,12 @@ async def process_incoming_message(
         github_stats = await _get_project_github_stats(project)
         milestones = _serialize_project_milestones(db, project)
 
-        # Call AI service
+        logger.info(
+            "[%s] Context: project=%r milestones=%d github=%s",
+            channel.upper(), project_name, len(milestones), bool(github_stats),
+        )
+
+        # Call AI service — Gemini->OpenAI->Claude auto-fallback built in
         ai_result = await generate_client_response(
             client_name=client.name,
             project_name=project_name,
@@ -164,14 +175,26 @@ async def process_incoming_message(
 
         reply = ai_result.get("response", "")
         if not reply:
-            reply = "Sorry, I couldn't generate a response right now. Please try again. 🙏"
+            reply = "Sorry, I couldn't generate a response right now. Please try again. \U0001f64f"
 
         _save_chat_history(db, client, project, message, reply, ai_result, channel)
 
+        elapsed_ms = int((time.monotonic() - start_ts) * 1000)
+        logger.info(
+            "[%s] Done client=%r provider=%s tokens=%s total=%dms",
+            channel.upper(), client.name,
+            ai_result.get("provider", "?"), ai_result.get("tokens_used", 0),
+            elapsed_ms,
+        )
         return reply
 
     except Exception as e:
-        logger.error(f"[{channel}] Error processing message: {e}", exc_info=True)
+        elapsed_ms = int((time.monotonic() - start_ts) * 1000)
+        logger.error(
+            "[%s] Pipeline error client=%r after %dms: %s",
+            channel.upper(), client.name, elapsed_ms, e,
+            exc_info=True,
+        )
         return "Sorry, something went wrong. Please try again later or contact support."
     finally:
         db.close()
