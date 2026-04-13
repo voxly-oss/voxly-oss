@@ -17,6 +17,7 @@ export interface Client {
     phone: string;
     email: string | null;
     company: string | null;
+    telegram_chat_id: string | null;
     is_active: boolean;
     created_at: string;
     updated_at: string;
@@ -79,6 +80,7 @@ export interface ClientForm {
     phone: string;
     email?: string;
     company?: string;
+    telegram_chat_id?: string;
 }
 
 export interface ProjectForm {

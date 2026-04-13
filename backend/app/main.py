@@ -14,6 +14,7 @@ from app.api.v1 import (
     milestones_router,
     chat_router,
     whatsapp_router,
+    telegram_router,
     api_keys_router,
     billing_router,
     notifications_router,
@@ -71,6 +72,7 @@ app.include_router(projects_router, prefix="/api/v1/projects", tags=["Projects"]
 app.include_router(milestones_router, prefix="/api/v1/milestones", tags=["Milestones"])
 app.include_router(chat_router, prefix="/api/v1/chat", tags=["Chat"])
 app.include_router(whatsapp_router, prefix="/api/v1/whatsapp", tags=["WhatsApp"])
+app.include_router(telegram_router, prefix="/api/v1/telegram", tags=["Telegram"])
 app.include_router(api_keys_router, prefix="/api/v1/api-keys", tags=["API Keys"])
 app.include_router(billing_router, prefix="/api/v1/billing", tags=["Billing"])
 app.include_router(notifications_router, prefix="/api/v1/notifications", tags=["Notifications"])

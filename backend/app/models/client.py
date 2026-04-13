@@ -17,6 +17,7 @@ class Client(Base):
     phone = Column(String(50), unique=True, nullable=False, index=True)
     email = Column(String(255), nullable=True)
     company = Column(String(255), nullable=True)
+    telegram_chat_id = Column(String(100), nullable=True, unique=True, index=True)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

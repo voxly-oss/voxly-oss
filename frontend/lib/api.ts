@@ -20,14 +20,18 @@ api.interceptors.request.use((config) => {
     return config;
 });
 
-// Handle 401 errors — redirect to login
+// Handle 401 errors — redirect to login (except for super admin routes which handle it themselves)
 api.interceptors.response.use(
     (response) => response,
     (error) => {
         if (error.response?.status === 401) {
             if (typeof window !== 'undefined') {
-                localStorage.removeItem('access_token');
-                window.location.href = '/login';
+                // Don't auto-redirect from super admin — the page handles its own auth flow
+                const isSuperAdminRoute = window.location.pathname.startsWith('/voxly-admin');
+                if (!isSuperAdminRoute) {
+                    localStorage.removeItem('access_token');
+                    window.location.href = '/login';
+                }
             }
         }
         return Promise.reject(error);
@@ -87,6 +91,7 @@ export const clientsAPI = {
         phone: string;
         email?: string;
         company?: string;
+        telegram_chat_id?: string;
     }) => api.post('/api/v1/clients', data),
     get: (id: string) => api.get(`/api/v1/clients/${id}`),
     update: (
@@ -96,6 +101,7 @@ export const clientsAPI = {
             phone?: string;
             email?: string;
             company?: string;
+            telegram_chat_id?: string;
             is_active?: boolean;
         }
     ) => api.put(`/api/v1/clients/${id}`, data),
@@ -229,6 +235,10 @@ export const superAdminAPI = {
         api.patch(`/voxly-admin/users/${userId}/disable`, {}, { headers: { 'X-Admin-Secret': adminSecret } }),
     impersonate: (userId: string, adminSecret: string) =>
         api.post(`/voxly-admin/impersonate/${userId}`, {}, { headers: { 'X-Admin-Secret': adminSecret } }),
+    getTenantDetail: (userId: string, adminSecret: string) =>
+        api.get(`/voxly-admin/tenants/${userId}`, { headers: { 'X-Admin-Secret': adminSecret } }),
+    getActivity: (adminSecret: string, limit = 50) =>
+        api.get(`/voxly-admin/activity?limit=${limit}`, { headers: { 'X-Admin-Secret': adminSecret } }),
 };
 
 export default api;

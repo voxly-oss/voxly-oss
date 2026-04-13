@@ -68,6 +68,10 @@ class Settings(BaseSettings):
     SUPER_ADMIN_EMAIL: str = ""
     SUPER_ADMIN_SECRET: str = ""  # Extra secret required in X-Admin-Secret header
 
+    # Telegram Bot
+    TELEGRAM_BOT_TOKEN: str = ""
+    TELEGRAM_WEBHOOK_SECRET: str = ""  # Random token to verify Telegram webhook calls
+
     # Application
     DEBUG: bool = False
     RATE_LIMIT_PER_MINUTE: int = 60  # Auth endpoints rate limit

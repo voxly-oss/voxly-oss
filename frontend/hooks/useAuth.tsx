@@ -42,10 +42,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             }
             setToken(storedToken);
             const { data } = await authAPI.me();
-            setUser(data);
-        } catch (error) {
+            if (data) setUser(data);
+        } catch {
+            // Token expired or invalid — clean up silently
             localStorage.removeItem('access_token');
             setToken(null);
+            setUser(null);
         } finally {
             setLoading(false);
         }
@@ -64,7 +66,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setToken(data.access_token);
         const { data: userData } = await authAPI.me();
         setUser(userData);
-        router.push('/dashboard');
+        // Support ?redirect= param so /voxly-admin can send user back after re-login
+        const searchParams = new URLSearchParams(window.location.search);
+        const redirectTo = searchParams.get('redirect');
+        router.push(redirectTo ?? '/dashboard');
     }
 
     async function loginWithGoogle(googleToken: string) {

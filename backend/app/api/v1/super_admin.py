@@ -270,3 +270,154 @@ async def impersonate_user(*,
         impersonated_user=user.email,
         warning="This token expires in 15 minutes. All actions will be logged.",
     )
+
+
+# ─── Tenant Detail ────────────────────────────────────────────────────────────
+
+class TenantDetail(TenantSummary):
+    """Full breakdown for a single tenant."""
+    total_messages: int
+    tokens_used: int
+    last_active: Optional[str] = None
+    recent_messages: List[dict]   # metadata only — no PII content
+
+
+@router.get("/tenants/{user_id}", response_model=TenantDetail, include_in_schema=False)
+async def get_tenant_detail(*,
+    user_id: UUID,
+    db: Annotated[Session, Depends(get_db)],
+    _: Annotated[User, Depends(require_super_admin)],
+):
+    """Get full detail for a single tenant including recent AI activity metadata."""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail=USER_NOT_FOUND)
+
+    client_ids = [c.id for c in db.query(Client.id).filter(Client.user_id == user_id).all()]
+    client_count = len(client_ids)
+
+    project_count = 0
+    message_count = 0
+    tokens_used = 0
+    last_active = None
+    recent_messages = []
+
+    if client_ids:
+        project_count = db.query(func.count(Project.id)).filter(
+            Project.client_id.in_(client_ids)
+        ).scalar() or 0
+
+        message_count = db.query(func.count(ChatHistory.id)).filter(
+            ChatHistory.client_id.in_(client_ids)
+        ).scalar() or 0
+
+        tokens_used = db.query(func.sum(ChatHistory.tokens_used)).filter(
+            ChatHistory.client_id.in_(client_ids)
+        ).scalar() or 0
+
+        # Build client lookup
+        clients = db.query(Client).filter(Client.id.in_(client_ids)).all()
+        client_name_map = {str(c.id): c.name for c in clients}
+
+        # Last 10 AI messages — metadata only
+        recent = (
+            db.query(ChatHistory)
+            .filter(ChatHistory.client_id.in_(client_ids))
+            .order_by(ChatHistory.created_at.desc())
+            .limit(10)
+            .all()
+        )
+        recent_messages = [
+            {
+                "client_name": client_name_map.get(str(m.client_id), "Unknown"),
+                "provider": m.model_used or "unknown",
+                "tokens": m.tokens_used or 0,
+                "timestamp": m.created_at.isoformat(),
+            }
+            for m in recent
+        ]
+
+        if recent:
+            last_active = recent[0].created_at.isoformat()
+
+    # Get plan
+    plan_name = None
+    sub = db.query(Subscription).filter(Subscription.user_id == user_id).first()
+    if sub:
+        plan = db.query(Plan).filter(Plan.id == sub.plan_id).first()
+        if plan:
+            plan_name = plan.name
+
+    return TenantDetail(
+        id=str(user.id),
+        email=user.email,
+        full_name=user.full_name,
+        agency_name=user.agency_name,
+        is_active=user.is_active,
+        subscription_tier=user.subscription_tier,
+        plan_name=plan_name,
+        client_count=client_count,
+        project_count=project_count,
+        message_count=message_count,
+        total_messages=message_count,
+        tokens_used=int(tokens_used),
+        last_active=last_active,
+        recent_messages=recent_messages,
+        created_at=user.created_at.isoformat(),
+    )
+
+
+# ─── Platform Activity Feed ───────────────────────────────────────────────────
+
+class PlatformActivityItem(BaseModel):
+    tenant_email: str
+    agency_name: Optional[str] = None
+    client_name: str
+    provider: str
+    tokens: int
+    timestamp: str
+
+
+@router.get("/activity", response_model=List[PlatformActivityItem], include_in_schema=False)
+async def get_platform_activity(*,
+    limit: int = 50,
+    db: Annotated[Session, Depends(get_db)],
+    _: Annotated[User, Depends(require_super_admin)],
+):
+    """Platform-wide recent AI activity — metadata only, no message content."""
+    recent = (
+        db.query(ChatHistory)
+        .order_by(ChatHistory.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+    if not recent:
+        return []
+
+    # Batch-load clients
+    client_ids = list({str(m.client_id) for m in recent})
+    clients = db.query(Client).filter(Client.id.in_(client_ids)).all()
+    client_map = {str(c.id): c for c in clients}
+
+    # Batch-load users (tenants)
+    user_ids = list({str(c.user_id) for c in clients})
+    users = db.query(User).filter(User.id.in_(user_ids)).all()
+    user_map = {str(u.id): u for u in users}
+
+    result = []
+    for msg in recent:
+        client = client_map.get(str(msg.client_id))
+        if not client:
+            continue
+        user = user_map.get(str(client.user_id))
+        result.append(PlatformActivityItem(
+            tenant_email=user.email if user else "unknown",
+            agency_name=user.agency_name if user else None,
+            client_name=client.name,
+            provider=msg.model_used or "unknown",
+            tokens=msg.tokens_used or 0,
+            timestamp=msg.created_at.isoformat(),
+        ))
+
+    return result

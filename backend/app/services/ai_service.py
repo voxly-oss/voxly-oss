@@ -7,7 +7,7 @@ while handling context building, logging, and error handling.
 
 Usage:
     from app.services.ai_service import generate_client_response
-    
+
     result = await generate_client_response(
         client_name="Acme Corp",
         project_name="Website Redesign",
@@ -19,10 +19,38 @@ Usage:
 
 from app.services.ai_providers import get_provider, DEFAULT_PROVIDER
 from app.services.ai_providers.base import build_context, SYSTEM_PROMPT
-from typing import Dict, List, Any
+from app.config import settings
+from typing import Dict, List, Any, Optional
 import logging
+import time
 
 logger = logging.getLogger(__name__)
+
+# Errors that indicate we should try next provider instead of giving up
+_RETRYABLE_SIGNALS = (
+    "503", "unavailable", "rate limit", "rate_limit",
+    "429", "quota", "overloaded", "capacity",
+)
+
+
+def _build_fallback_chain() -> list:
+    """Return ordered list of configured providers to try."""
+    chain = []
+    if settings.GEMINI_API_KEY:
+        chain.append("gemini")
+    if settings.OPENAI_API_KEY:
+        chain.append("openai")
+    if settings.ANTHROPIC_API_KEY:
+        chain.append("claude")
+    if not chain:
+        chain.append("gemini")
+    return chain
+
+
+def _is_retryable(error: str) -> bool:
+    """Return True if the error suggests a temporary provider overload."""
+    lowered = error.lower()
+    return any(sig in lowered for sig in _RETRYABLE_SIGNALS)
 
 
 async def generate_client_response(
@@ -36,22 +64,15 @@ async def generate_client_response(
     api_key: str = None,
 ) -> Dict[str, Any]:
     """
-    Generate AI response using the configured provider.
-    
-    Args:
-        client_name: Name of the client
-        project_name: Name of the project
-        github_stats: Dictionary with GitHub statistics
-        milestones: List of milestone dictionaries
-        client_question: The question asked by client
-        provider_name: AI provider to use (default: claude)
-        api_key: Optional user-provided API key (BYOK)
-        
+    Generate AI response using the configured provider with automatic fallback.
+
+    When the primary provider returns a 503/rate-limit/overload error the
+    service transparently retries with the next available provider so the
+    raw error string never reaches the end user.
+
     Returns:
-        Dictionary with response, tokens_used, model, and provider info
+        Dictionary with response, tokens_used, model, provider, success, error
     """
-    
-    # Build context (same for all providers)
     context = build_context(
         client_name=client_name,
         project_name=project_name,
@@ -59,52 +80,87 @@ async def generate_client_response(
         milestones=milestones,
         client_question=client_question,
     )
-    
-    # Instantiate the Agent
-    # We create a new instance per request to ensure statelessness for tools if needed,
-    # though tools are mostly stateless.
+
     from app.services.ai_agent import VoxlyAgent
-    
-    try:
-        agent = VoxlyAgent(
-            provider_name=provider_name or DEFAULT_PROVIDER,
-            api_key=api_key
-        )
-        
-        # Run the ReAct Loop
-        # We pass the pre-calculated context as background information
-        logger.info(f"Delegating request to VoxlyAgent for client {client_name}")
-        
-        result = await agent.chat(
-            user_message=client_question,
-            images=[media_url] if media_url else None,
-            context=context
-        )
-        
-        if not result["success"]:
-            raise RuntimeError(result.get("error") or "AI response generation failed")
-            
+
+    # If caller specified a provider (BYOK), only try that one
+    if provider_name:
+        providers_to_try = [provider_name]
+    else:
+        providers_to_try = _build_fallback_chain()
+
+    last_error: Optional[str] = None
+
+    for attempt, pname in enumerate(providers_to_try):
+        start_ts = time.monotonic()
         logger.info(
-            f"VoxlyAgent success. Steps: {result.get('steps')}, "
-            f"Tokens: {result.get('tokens_used')}"
+            "[AI] Attempt %d/%d provider=%s client=%r",
+            attempt + 1, len(providers_to_try), pname, client_name,
         )
-        
-        return {
-            "response": result["response"],
-            "tokens_used": result.get("tokens_used", 0),
-            "model": result.get("model", "unknown"),
-            "provider": provider_name or DEFAULT_PROVIDER,
-            "success": True,
-            "error": None,
-        }
-        
-    except Exception as e:
-        logger.error(f"VoxlyAgent error: {e}")
-        return {
-            "response": f"Hi {client_name}! The AI service is temporarily unavailable. Please try again shortly. 🙏",
-            "tokens_used": 0,
-            "model": "error",
-            "provider": provider_name or DEFAULT_PROVIDER,
-            "success": False,
-            "error": str(e),
-        }
+        try:
+            agent = VoxlyAgent(provider_name=pname, api_key=api_key)
+            result = await agent.chat(
+                user_message=client_question,
+                images=[media_url] if media_url else None,
+                context=context,
+            )
+
+            latency_ms = int((time.monotonic() - start_ts) * 1000)
+
+            if result["success"]:
+                logger.info(
+                    "[AI] OK provider=%s model=%s tokens=%s latency=%dms",
+                    pname, result.get("model"), result.get("tokens_used", 0), latency_ms,
+                )
+                return {
+                    "response": result["response"],
+                    "tokens_used": result.get("tokens_used", 0),
+                    "model": result.get("model", "unknown"),
+                    "provider": pname,
+                    "success": True,
+                    "error": None,
+                }
+
+            # Provider returned success=False (e.g. Gemini 503)
+            last_error = result.get("error") or "AI response generation failed"
+            logger.warning(
+                "[AI] FAIL provider=%s error=%r latency=%dms",
+                pname, last_error, latency_ms,
+            )
+
+            if attempt < len(providers_to_try) - 1 and _is_retryable(last_error):
+                next_p = providers_to_try[attempt + 1]
+                logger.warning("[AI] Retryable — falling back to %s", next_p)
+                continue
+
+            break  # Non-retryable or no more fallbacks
+
+        except Exception as exc:
+            latency_ms = int((time.monotonic() - start_ts) * 1000)
+            last_error = str(exc)
+            logger.error(
+                "[AI] Exception provider=%s %s: %s latency=%dms",
+                pname, type(exc).__name__, exc, latency_ms,
+                exc_info=True,
+            )
+            if attempt < len(providers_to_try) - 1:
+                logger.warning("[AI] Falling back to %s", providers_to_try[attempt + 1])
+                continue
+            break
+
+    # All providers exhausted — never send raw error to client
+    logger.error(
+        "[AI] All providers exhausted for client=%r. Last error: %s",
+        client_name, last_error,
+    )
+    return {
+        "response": (
+            f"Hi {client_name}! The AI service is temporarily unavailable. "
+            "Please try again shortly. \U0001f64f"
+        ),
+        "tokens_used": 0,
+        "model": "error",
+        "provider": "none",
+        "success": False,
+        "error": last_error,
+    }
