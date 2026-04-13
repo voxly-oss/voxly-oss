@@ -137,11 +137,23 @@ function AuthGate({ onUnlock }: { onUnlock: (secret: string) => void }) {
     const [secret, setSecret] = useState('');
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
+    const [checking, setChecking] = useState(true);   // checking JWT on mount
     const [sessionExpired, setSessionExpired] = useState(false);
 
+    // On mount: verify the stored JWT is still valid BEFORE showing the secret input
     useEffect(() => {
         const token = localStorage.getItem('access_token');
-        if (!token) window.location.href = '/login';
+        if (!token) {
+            // No token at all — go to login
+            window.location.href = '/login?redirect=/voxly-admin';
+            return;
+        }
+        // Verify token is still accepted by backend
+        import('@/lib/api').then(({ authAPI }) => {
+            authAPI.me()
+                .then(() => setChecking(false))               // token valid → show secret input
+                .catch(() => setSessionExpired(true));         // expired / invalid
+        });
     }, []);
 
     const handleUnlock = async () => {
@@ -153,11 +165,12 @@ function AuthGate({ onUnlock }: { onUnlock: (secret: string) => void }) {
         } catch (e: unknown) {
             const err = e as { response?: { status?: number } };
             if (err?.response?.status === 401) setSessionExpired(true);
-            else if (err?.response?.status === 403) setError('Invalid admin secret.');
+            else if (err?.response?.status === 403) setError('Invalid admin secret. Check your credentials.');
             else setError('Connection error. Is the backend reachable?');
         } finally { setLoading(false); }
     };
 
+    // Session expired — show re-login screen
     if (sessionExpired) return (
         <div className="min-h-screen bg-[#030308] flex items-center justify-center p-4">
             <div className="bg-[#0d0d16] border border-amber-500/20 rounded-2xl p-8 max-w-sm w-full text-center shadow-2xl">
@@ -165,11 +178,25 @@ function AuthGate({ onUnlock }: { onUnlock: (secret: string) => void }) {
                     <AlertTriangle className="w-6 h-6 text-amber-400" />
                 </div>
                 <h2 className="text-xl font-bold text-white mb-2">Session Expired</h2>
-                <p className="text-white/40 text-sm mb-6">Please sign in again as the super admin account, then return here.</p>
+                <p className="text-white/40 text-sm mb-6">
+                    Your login session has expired. Please sign in again as the super admin account, then you'll be brought back here automatically.
+                </p>
                 <button onClick={() => { localStorage.removeItem('access_token'); window.location.href = '/login?redirect=/voxly-admin'; }}
                     className="w-full py-3 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white font-semibold rounded-xl transition-all flex items-center justify-center gap-2">
-                    <LogIn className="w-4 h-4" /> Sign in again
+                    <LogIn className="w-4 h-4" /> Sign in again → Return here
                 </button>
+            </div>
+        </div>
+    );
+
+    // Still verifying JWT
+    if (checking) return (
+        <div className="min-h-screen bg-[#030308] flex items-center justify-center">
+            <div className="flex flex-col items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-violet-500/10 border border-violet-500/15 flex items-center justify-center">
+                    <RefreshCw className="w-4 h-4 text-violet-400 animate-spin" />
+                </div>
+                <p className="text-xs text-white/30">Verifying session...</p>
             </div>
         </div>
     );
