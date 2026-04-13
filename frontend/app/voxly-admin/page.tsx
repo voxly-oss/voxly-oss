@@ -98,6 +98,7 @@ function AuthGate({ onUnlock }: { onUnlock: (secret: string) => void }) {
     const [secret, setSecret] = useState('');
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
+    const [sessionExpired, setSessionExpired] = useState(false);
 
     // Check if already logged in
     useEffect(() => {
@@ -111,13 +112,17 @@ function AuthGate({ onUnlock }: { onUnlock: (secret: string) => void }) {
         if (!secret.trim()) return;
         setLoading(true);
         setError('');
+        setSessionExpired(false);
         try {
             // Validate secret against backend before allowing access
             await superAdminAPI.getStats(secret);
             onUnlock(secret);
         } catch (e: unknown) {
             const err = e as { response?: { status?: number } };
-            if (err?.response?.status === 403) {
+            if (err?.response?.status === 401) {
+                // JWT expired — must re-login first
+                setSessionExpired(true);
+            } else if (err?.response?.status === 403) {
                 setError('Invalid admin secret. Check your credentials.');
             } else {
                 setError('Connection error. Is the backend reachable?');
@@ -126,6 +131,32 @@ function AuthGate({ onUnlock }: { onUnlock: (secret: string) => void }) {
             setLoading(false);
         }
     };
+
+    if (sessionExpired) {
+        return (
+            <div className="min-h-screen bg-[#05050a] flex items-center justify-center p-4">
+                <div className="bg-[#0d0d14] border border-amber-500/20 rounded-2xl p-8 shadow-2xl max-w-sm w-full text-center">
+                    <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center mx-auto mb-5">
+                        <AlertTriangle className="w-6 h-6 text-amber-400" />
+                    </div>
+                    <h2 className="text-xl font-bold text-white mb-2">Session Expired</h2>
+                    <p className="text-white/40 text-sm mb-6">
+                        Your login session has expired. Please sign in again as the super admin account, then return here.
+                    </p>
+                    <button
+                        onClick={() => {
+                            localStorage.removeItem('access_token');
+                            window.location.href = '/login?redirect=/voxly-admin';
+                        }}
+                        className="w-full py-3 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white font-semibold rounded-xl transition-all flex items-center justify-center gap-2"
+                    >
+                        <LogIn className="w-4 h-4" />
+                        Sign in again
+                    </button>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="min-h-screen bg-[#05050a] flex items-center justify-center p-4">
@@ -409,7 +440,14 @@ export default function CommandCenterPage() {
             setActivity(activityRes.data);
         } catch (e: unknown) {
             const err = e as { response?: { status?: number } };
-            if (err?.response?.status === 403) {
+            if (err?.response?.status === 401) {
+                // JWT expired mid-session — send back to login
+                setError('Your session has expired. Redirecting to login...');
+                setTimeout(() => {
+                    localStorage.removeItem('access_token');
+                    window.location.href = '/login?redirect=/voxly-admin';
+                }, 1500);
+            } else if (err?.response?.status === 403) {
                 setError('Access denied. Re-enter credentials.');
                 setAdminSecret(null);
             } else {

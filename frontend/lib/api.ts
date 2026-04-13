@@ -20,14 +20,18 @@ api.interceptors.request.use((config) => {
     return config;
 });
 
-// Handle 401 errors — redirect to login
+// Handle 401 errors — redirect to login (except for super admin routes which handle it themselves)
 api.interceptors.response.use(
     (response) => response,
     (error) => {
         if (error.response?.status === 401) {
             if (typeof window !== 'undefined') {
-                localStorage.removeItem('access_token');
-                window.location.href = '/login';
+                // Don't auto-redirect from super admin — the page handles its own auth flow
+                const isSuperAdminRoute = window.location.pathname.startsWith('/voxly-admin');
+                if (!isSuperAdminRoute) {
+                    localStorage.removeItem('access_token');
+                    window.location.href = '/login';
+                }
             }
         }
         return Promise.reject(error);
