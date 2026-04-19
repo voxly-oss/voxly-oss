@@ -112,44 +112,75 @@ async def list_all_tenants(*,
     db: Annotated[Session , Depends(get_db)],
     _: Annotated[User , Depends(require_super_admin)],
 ):
-    """List all tenants (agency owners) with usage stats."""
+    """
+    List all tenants with usage stats.
+
+    Architect's Note: Uses a GROUP BY aggregation pattern instead of a loop-per-user.
+    This reduces DB round-trips from O(5N) to O(4) regardless of tenant count.
+    """
     users = db.query(User).order_by(User.created_at.desc()).offset(skip).limit(limit).all()
+    if not users:
+        return []
 
-    result = []
-    for user in users:
-        client_count = db.query(func.count(Client.id)).filter(Client.user_id == user.id).scalar() or 0
-        project_count = db.query(func.count(Project.id)).join(
-            Client, Client.id == Project.client_id
-        ).filter(Client.user_id == user.id).scalar() or 0
+    user_ids = [u.id for u in users]
 
-        client_ids = [c.id for c in db.query(Client.id).filter(Client.user_id == user.id).all()]
-        message_count = 0
-        if client_ids:
-            message_count = db.query(func.count(ChatHistory.id)).filter(
-                ChatHistory.client_id.in_(client_ids)
-            ).scalar() or 0
+    # ── 1. Client counts per user (1 query) ──────────────────────────────────
+    client_counts_raw = (
+        db.query(Client.user_id, func.count(Client.id))
+        .filter(Client.user_id.in_(user_ids))
+        .group_by(Client.user_id)
+        .all()
+    )
+    client_count_map: dict = {str(uid): cnt for uid, cnt in client_counts_raw}
 
-        # Get plan name from subscription
-        plan_name = None
-        sub = db.query(Subscription).filter(Subscription.user_id == user.id).first()
-        if sub:
-            plan = db.query(Plan).filter(Plan.id == sub.plan_id).first()
-            if plan:
-                plan_name = plan.name
+    # ── 2. Project counts per user (1 query via client join) ─────────────────
+    project_counts_raw = (
+        db.query(Client.user_id, func.count(Project.id))
+        .join(Project, Project.client_id == Client.id)
+        .filter(Client.user_id.in_(user_ids))
+        .group_by(Client.user_id)
+        .all()
+    )
+    project_count_map: dict = {str(uid): cnt for uid, cnt in project_counts_raw}
 
-        result.append(TenantSummary(
+    # ── 3. Message counts per user (1 query via client join) ─────────────────
+    message_counts_raw = (
+        db.query(Client.user_id, func.count(ChatHistory.id))
+        .join(ChatHistory, ChatHistory.client_id == Client.id)
+        .filter(Client.user_id.in_(user_ids))
+        .group_by(Client.user_id)
+        .all()
+    )
+    message_count_map: dict = {str(uid): cnt for uid, cnt in message_counts_raw}
+
+    # ── 4. Plan names via subscriptions (1 query with join) ──────────────────
+    plan_name_map: dict = {}
+    subs = (
+        db.query(Subscription.user_id, Plan.name)
+        .join(Plan, Plan.id == Subscription.plan_id)
+        .filter(Subscription.user_id.in_(user_ids))
+        .all()
+    )
+    for sub_user_id, plan_name in subs:
+        plan_name_map[str(sub_user_id)] = plan_name
+
+    # ── Build result using O(1) HashMap lookups ───────────────────────────────
+    result = [
+        TenantSummary(
             id=str(user.id),
             email=user.email,
             full_name=user.full_name,
             agency_name=user.agency_name,
             is_active=user.is_active,
             subscription_tier=user.subscription_tier,
-            plan_name=plan_name,
-            client_count=client_count,
-            project_count=project_count,
-            message_count=message_count,
+            plan_name=plan_name_map.get(str(user.id)),
+            client_count=client_count_map.get(str(user.id), 0),
+            project_count=project_count_map.get(str(user.id), 0),
+            message_count=message_count_map.get(str(user.id), 0),
             created_at=user.created_at.isoformat(),
-        ))
+        )
+        for user in users
+    ]
 
     return result
 
