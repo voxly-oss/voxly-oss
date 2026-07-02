@@ -156,14 +156,20 @@ class VoxlyAgent:
         self.max_steps = 5  # Safety rail: prevent infinite tool loops
 
     async def chat(
-        self, 
-        user_message: str, 
+        self,
+        user_message: str,
         images: List[str] = None,
-        context: str = "", 
-        system_prompt: str = None
+        context: str = "",
+        system_prompt: str = None,
+        history: List[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Run the agent loop for a single turn.
+
+        Args:
+            history: Prior conversation turns as a list of
+                {"role": "user"|"assistant", "content": str} dicts. Seeded
+                before the current message so the agent has short-term memory.
         """
         # 1. Initialize conversation history with context and user message
         # In a real app, 'messages' would be passed in or retrieved from memory.
@@ -199,8 +205,10 @@ class VoxlyAgent:
         # If no images, we can use a simple string or a list with one text block
         # To be safe and consistent, let's use list of blocks if images exist
         
-        messages = await _build_messages(text_content, images)
-        
+        # Seed short-term memory with prior turns, then the current message.
+        messages = list(history) if history else []
+        messages.extend(await _build_messages(text_content, images))
+
         step_count = 0
         final_response = ""
         total_tokens_used = 0

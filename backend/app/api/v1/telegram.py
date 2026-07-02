@@ -16,7 +16,7 @@ from fastapi import APIRouter, Request, BackgroundTasks, HTTPException
 from app.config import settings
 from app.database import SessionLocal
 from app.services.telegram_service import send_telegram_message
-from app.services.messaging_core import find_client_by_telegram, process_incoming_message
+from app.services.messaging_core import find_client_by_telegram, process_incoming_message, is_duplicate_message
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -49,6 +49,7 @@ async def telegram_webhook(*, request: Request, background_tasks: BackgroundTask
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON body")
 
+    update_id = body.get("update_id")
     message = body.get("message")
     if not message:
         # Could be an edit, callback_query, etc — ignore gracefully
@@ -85,6 +86,7 @@ async def telegram_webhook(*, request: Request, background_tasks: BackgroundTask
         chat_id,
         text,
         photo_file_id,
+        str(update_id) if update_id is not None else None,
     )
 
     return {"status": "processing"}
@@ -94,10 +96,16 @@ async def _process_telegram_message(
     chat_id: str,
     text: str,
     photo_file_id: str = None,
+    update_id: str = None,
 ):
     """Background task: process incoming Telegram message and send AI reply."""
     db = SessionLocal()
     try:
+        # Idempotency: Telegram re-delivers updates until acknowledged.
+        if is_duplicate_message(db, "telegram", update_id):
+            logger.info(f"Duplicate Telegram update {update_id} — skipped")
+            return
+
         client = find_client_by_telegram(db, chat_id)
         if not client:
             await send_telegram_message(

@@ -62,6 +62,7 @@ async def generate_client_response(
     media_url: str = None,
     provider_name: str = None,
     api_key: str = None,
+    history: List[Dict] = None,
 ) -> Dict[str, Any]:
     """
     Generate AI response using the configured provider with automatic fallback.
@@ -103,6 +104,7 @@ async def generate_client_response(
                 user_message=client_question,
                 images=[media_url] if media_url else None,
                 context=context,
+                history=history,
             )
 
             latency_ms = int((time.monotonic() - start_ts) * 1000)

@@ -124,7 +124,55 @@ def root():
 
 
 @app.get("/health", tags=["Health"])
-def health():
-    """Health check endpoint."""
+@app.get("/health/live", tags=["Health"])
+def health_live():
+    """Liveness probe — the process is up. Never touches dependencies.
+
+    Kept shallow on purpose: a transient Redis/DB blip must not fail liveness
+    (which would trigger a pointless restart). Dependency health belongs on
+    the readiness probe below.
+    """
     return {"status": "healthy"}
+
+
+@app.get("/health/ready", tags=["Health"])
+def health_ready():
+    """Readiness probe — verifies the app can serve traffic.
+
+    Checks the database and Redis. Returns 503 with a per-dependency
+    breakdown if either is unavailable so orchestrators can pull the
+    instance out of rotation instead of routing failing requests to it.
+    """
+    checks = {"database": False, "redis": False}
+
+    # Database
+    try:
+        from sqlalchemy import text
+        from app.database import SessionLocal
+
+        db = SessionLocal()
+        try:
+            db.execute(text("SELECT 1"))
+            checks["database"] = True
+        finally:
+            db.close()
+    except Exception as exc:  # pragma: no cover - infra failure path
+        import logging
+        logging.getLogger(__name__).error("Health: DB check failed: %s", exc)
+
+    # Redis
+    try:
+        from app.services.cache_service import redis_client
+
+        redis_client.ping()
+        checks["redis"] = True
+    except Exception as exc:  # pragma: no cover - infra failure path
+        import logging
+        logging.getLogger(__name__).error("Health: Redis check failed: %s", exc)
+
+    healthy = all(checks.values())
+    payload = {"status": "healthy" if healthy else "degraded", "checks": checks}
+    if not healthy:
+        return JSONResponse(status_code=503, content=payload)
+    return payload
 

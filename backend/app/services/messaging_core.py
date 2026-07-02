@@ -20,6 +20,7 @@ from app.models.client import Client
 from app.models.project import Project
 from app.models.milestone import Milestone
 from app.models.chat_history import ChatHistory
+from app.models.processed_message import ProcessedMessage
 from app.models.user import User
 from app.services.ai_service import generate_client_response
 from app.services.cache_service import get_github_stats_cached
@@ -31,6 +32,35 @@ logger = logging.getLogger(__name__)
 
 
 # ── Client lookup ──────────────────────────────────────────────────────────────
+
+def is_duplicate_message(db: Session, channel: str, provider_message_id: Optional[str]) -> bool:
+    """Return True if this inbound message was already handled (idempotency).
+
+    Atomically records the id on first sight; a unique-constraint violation on a
+    concurrent retry is treated as "already processed". Empty ids are never
+    deduped (we can't prove uniqueness) so we let them through.
+    """
+    if not provider_message_id:
+        return False
+
+    namespaced = f"{channel}:{provider_message_id}"
+    exists = (
+        db.query(ProcessedMessage)
+        .filter(ProcessedMessage.provider_message_id == namespaced)
+        .first()
+    )
+    if exists:
+        return True
+
+    db.add(ProcessedMessage(provider_message_id=namespaced, channel=channel))
+    try:
+        db.commit()
+        return False
+    except Exception:
+        # Unique violation from a concurrent delivery of the same message.
+        db.rollback()
+        return True
+
 
 def find_client_by_phone(db: Session, phone: str) -> Optional[Client]:
     """Look up client by phone number (WhatsApp identifier)."""
@@ -78,6 +108,29 @@ def _serialize_project_milestones(db: Session, project: Optional[Project]) -> li
         }
         for m in ms_rows
     ]
+
+
+def _load_recent_history(db: Session, client: Client, limit: int = 6) -> list[dict]:
+    """Load the client's most recent turns as short-term memory for the agent.
+
+    Returns an ordered list of {"role", "content"} dicts (oldest first).
+    ``limit`` counts message/response pairs, so the agent sees up to
+    ``limit`` exchanges without blowing the context window.
+    """
+    rows = (
+        db.query(ChatHistory)
+        .filter(ChatHistory.client_id == client.id)
+        .order_by(ChatHistory.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    history: list[dict] = []
+    for row in reversed(rows):  # chronological order
+        if row.message:
+            history.append({"role": "user", "content": row.message})
+        if row.response:
+            history.append({"role": "assistant", "content": row.response})
+    return history
 
 
 def _save_chat_history(
@@ -173,10 +226,11 @@ async def process_incoming_message(
         project_name = project.name if project else "your project"
         github_stats = await _get_project_github_stats(project)
         milestones = _serialize_project_milestones(db, project)
+        history = _load_recent_history(db, client)
 
         logger.info(
-            "[%s] Context: project=%r milestones=%d github=%s",
-            channel.upper(), project_name, len(milestones), bool(github_stats),
+            "[%s] Context: project=%r milestones=%d github=%s history=%d",
+            channel.upper(), project_name, len(milestones), bool(github_stats), len(history),
         )
 
         # Call AI service — Gemini->OpenAI->Claude auto-fallback built in
@@ -187,6 +241,7 @@ async def process_incoming_message(
             milestones=milestones,
             client_question=message or "Hello",
             media_url=media_url,
+            history=history,
         )
 
         reply = ai_result.get("response", "")

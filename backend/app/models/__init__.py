@@ -9,6 +9,7 @@ from app.models.subscription import Subscription
 from app.models.api_key import APIKey
 from app.models.usage_log import UsageLog
 from app.models.user_ai_key import UserAIKey
+from app.models.processed_message import ProcessedMessage
 
 __all__ = [
     "User",
@@ -22,4 +23,5 @@ __all__ = [
     "APIKey",
     "UsageLog",
     "UserAIKey",
+    "ProcessedMessage",
 ]

@@ -6,7 +6,7 @@ All business logic (AI, history, broadcast) is in messaging_core.py.
 """
 from fastapi import APIRouter, Request, BackgroundTasks, HTTPException
 from app.services.whatsapp_service import send_whatsapp_message
-from app.services.messaging_core import find_client_by_phone, process_incoming_message
+from app.services.messaging_core import find_client_by_phone, process_incoming_message, is_duplicate_message
 from app.database import SessionLocal
 from app.config import settings
 from twilio.request_validator import RequestValidator
@@ -106,6 +106,11 @@ async def _process_whatsapp_message(
     """
     db = SessionLocal()
     try:
+        # Idempotency: Twilio retries deliveries — skip if already handled.
+        if is_duplicate_message(db, "whatsapp", message_sid):
+            logger.info(f"Duplicate WhatsApp message {message_sid} — skipped")
+            return
+
         client = find_client_by_phone(db, phone)
         if not client:
             logger.warning("No client found for incoming WhatsApp message")
