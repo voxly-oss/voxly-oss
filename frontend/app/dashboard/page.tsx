@@ -11,6 +11,7 @@ import {
     Sparkles, Globe, Wifi, WifiOff, ChevronRight, Star,
 } from 'lucide-react';
 import { useRef, useEffect, useState } from 'react';
+import UsageMeter from '@/components/UsageMeter';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -425,6 +426,9 @@ export default function DashboardPage() {
 
                     {/* RIGHT: 1/3 width */}
                     <div className="space-y-5">
+
+                        {/* Plan usage vs limits */}
+                        <UsageMeter />
 
                         {/* AI provider breakdown */}
                         <div className="bg-[#0d0d16] border border-white/[0.07] rounded-2xl p-5">

@@ -11,6 +11,8 @@ from app.models.client import Client
 from app.models.project import Project
 from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectResponse
 from app.utils.auth import get_current_user
+from app.utils.api_key_auth import require_scope
+from app.utils.entitlements import enforce_project_limit
 
 router = APIRouter()
 PROJECT_NOT_FOUND = "Project not found"
@@ -28,9 +30,9 @@ async def list_projects(*,
     skip: int = 0,
     limit: int = 100,
     db: Annotated[Session , Depends(get_db)],
-    current_user: Annotated[User , Depends(get_current_user)],
+    current_user: Annotated[User , Depends(require_scope("projects:read"))],
 ):
-    """List all projects for the current user's clients."""
+    """List all projects for the current user's clients (JWT session or API key with projects:read)."""
     user_client_ids = get_user_client_ids(db, current_user.id)
     
     query = db.query(Project).filter(Project.client_id.in_(user_client_ids), Project.deleted_at.is_(None))
@@ -53,9 +55,12 @@ async def create_project(*,
     project_data: ProjectCreate,
     background_tasks: BackgroundTasks,
     db: Annotated[Session , Depends(get_db)],
-    current_user: Annotated[User , Depends(get_current_user)],
+    current_user: Annotated[User , Depends(require_scope("projects:write"))],
 ):
     """Create a new project."""
+    # Enforce plan limit before doing any work
+    enforce_project_limit(db, current_user)
+
     # Verify client belongs to current user
     client = (
         db.query(Client)

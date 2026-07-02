@@ -20,8 +20,11 @@ from app.models.client import Client
 from app.models.project import Project
 from app.models.milestone import Milestone
 from app.models.chat_history import ChatHistory
+from app.models.user import User
 from app.services.ai_service import generate_client_response
 from app.services.cache_service import get_github_stats_cached
+from app.utils.entitlements import check_ai_message_quota, get_active_plan
+from app.utils.usage_tracker import get_usage_tracker
 from app.websockets.manager import manager
 
 logger = logging.getLogger(__name__)
@@ -153,6 +156,19 @@ async def process_incoming_message(
         )
         await _broadcast_incoming(client, message, channel)
 
+        # Enforce the tenant's monthly AI-message quota (fails open on infra errors)
+        tenant = db.query(User).filter(User.id == client.user_id).first()
+        if tenant is not None and not await check_ai_message_quota(db, tenant):
+            plan = get_active_plan(db, tenant)
+            logger.info(
+                "[%s] AI quota exceeded for tenant=%s plan=%s — sending soft cap notice",
+                channel.upper(), tenant.id, plan.slug,
+            )
+            return (
+                f"Hi {client.name}! Your project team is currently offline. "
+                "They'll get back to you as soon as possible. \U0001f64f"
+            )
+
         project = _get_client_project(db, client)
         project_name = project.name if project else "your project"
         github_stats = await _get_project_github_stats(project)
@@ -176,6 +192,13 @@ async def process_incoming_message(
         reply = ai_result.get("response", "")
         if not reply:
             reply = "Sorry, I couldn't generate a response right now. Please try again. \U0001f64f"
+
+        # Meter successful AI messages against the tenant's monthly quota
+        if ai_result.get("success"):
+            try:
+                await get_usage_tracker().track_ai_message(str(client.user_id))
+            except Exception as exc:  # pragma: no cover - infra failure path
+                logger.warning("Failed to track AI message usage: %s", exc)
 
         _save_chat_history(db, client, project, message, reply, ai_result, channel)
 

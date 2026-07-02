@@ -3,7 +3,7 @@ from typing import Optional
 from uuid import UUID
 import hashlib
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 import jwt
 from jwt.exceptions import InvalidTokenError
@@ -102,6 +102,7 @@ def verify_reset_token(token: str) -> Optional[str]:
 
 
 async def get_current_user(
+    request: Request,
     token: str = Depends(oauth2_scheme),
     db: Session = Depends(get_db),
 ) -> User:
@@ -126,6 +127,8 @@ async def get_current_user(
             detail="User account is deactivated",
         )
 
+    # Expose the resolved user id for the usage-metering middleware.
+    request.state.user_id = str(user.id)
     return user
 
 

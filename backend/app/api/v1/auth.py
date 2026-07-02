@@ -618,13 +618,12 @@ async def export_user_data(*,
     """GDPR Endpoint: Export all user data as JSON."""
     from app.models.client import Client
     from app.models.project import Project
-    from app.models.ai_key import AIKey
+    from app.models.user_ai_key import UserAIKey
     from app.models.api_key import APIKey
-    
+
     clients = db.query(Client).filter(Client.user_id == current_user.id).all()
     projects = db.query(Project).join(Client).filter(Client.user_id == current_user.id).all()
-    ai_keys = db.query(AIKey).filter(AIKey.user_id == current_user.id).all()
-    api_keys = db.query(APIKey).filter(APIKey.user_id == current_user.id).all()
+    ai_keys = db.query(UserAIKey).filter(UserAIKey.user_id == current_user.id).all()
     
     export_data = {
         "user_profile": {

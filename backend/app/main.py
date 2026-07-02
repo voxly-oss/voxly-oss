@@ -65,6 +65,31 @@ async def security_headers_middleware(request: Request, call_next):
         response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains; preload"
     return response
 
+
+@app.middleware("http")
+async def usage_metering_middleware(request: Request, call_next):
+    """Record per-tenant API usage for authenticated /api/v1 calls.
+
+    Runs after the route (and its auth dependency) has resolved, so
+    ``request.state.user_id`` — set by ``get_current_user`` — is available.
+    Metering never affects the response and swallows its own errors so a
+    Redis blip can't break the API.
+    """
+    response = await call_next(request)
+    try:
+        user_id = getattr(request.state, "user_id", None)
+        if user_id and request.url.path.startswith("/api/v1/"):
+            from app.utils.usage_tracker import get_usage_tracker
+
+            await get_usage_tracker().track_request(
+                user_id=user_id,
+                api_key_id=getattr(request.state, "api_key_id", None),
+                endpoint=request.url.path,
+            )
+    except Exception:  # pragma: no cover - metering must never break a request
+        pass
+    return response
+
 # Include API routers
 app.include_router(auth_router, prefix="/api/v1/auth", tags=["Authentication"])
 app.include_router(clients_router, prefix="/api/v1/clients", tags=["Clients"])

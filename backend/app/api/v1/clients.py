@@ -10,19 +10,21 @@ from app.models.user import User
 from app.models.client import Client
 from app.schemas.client import ClientCreate, ClientUpdate, ClientResponse
 from app.utils.auth import get_current_user
+from app.utils.api_key_auth import require_scope
+from app.utils.entitlements import enforce_client_limit
 
 router = APIRouter()
 CLIENT_NOT_FOUND = "Client not found"
 
 
 @router.get("", response_model=List[ClientResponse])
-async def list_clients(*, 
+async def list_clients(*,
     skip: int = 0,
     limit: int = 100,
     db: Annotated[Session , Depends(get_db)],
-    current_user: Annotated[User , Depends(get_current_user)],
+    current_user: Annotated[User , Depends(require_scope("clients:read"))],
 ):
-    """List all clients for the current user."""
+    """List all clients for the current user (JWT session or API key with clients:read)."""
     clients = (
         db.query(Client)
         .filter(Client.user_id == current_user.id, Client.deleted_at.is_(None))
@@ -38,9 +40,12 @@ async def create_client(*,
     client_data: ClientCreate,
     background_tasks: BackgroundTasks,
     db: Annotated[Session , Depends(get_db)],
-    current_user: Annotated[User , Depends(get_current_user)],
+    current_user: Annotated[User , Depends(require_scope("clients:write"))],
 ):
     """Create a new client."""
+    # Enforce plan limit before doing any work
+    enforce_client_limit(db, current_user)
+
     # Check phone uniqueness within this user's clients only
     existing_client = (
         db.query(Client)

@@ -4,6 +4,7 @@ import './globals.css';
 import { AuthProvider } from '@/hooks/useAuth';
 import { Toaster } from '@/components/ui/toaster';
 import QueryProvider from '@/components/QueryProvider';
+import UpgradeModal from '@/components/UpgradeModal';
 
 const spaceGrotesk = Space_Grotesk({
     subsets: ['latin'],
@@ -38,6 +39,7 @@ export default function RootLayout({
                 <QueryProvider>
                     <AuthProvider>
                         {children}
+                        <UpgradeModal />
                         <Toaster />
                     </AuthProvider>
                 </QueryProvider>

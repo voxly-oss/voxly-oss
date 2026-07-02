@@ -20,11 +20,25 @@ api.interceptors.request.use((config) => {
     return config;
 });
 
-// Handle 401 errors — redirect to login (except for super admin routes which handle it themselves)
+/** Structured payload emitted when the backend returns a 402 plan_limit_reached. */
+export type PlanLimitDetail = {
+    error: 'plan_limit_reached';
+    resource: string;
+    limit: number;
+    plan: string;
+    message: string;
+};
+
+/** Custom event name the global UpgradeModal listens for. */
+export const PLAN_LIMIT_EVENT = 'voxly:plan-limit';
+
+// Handle 401 (auth) and 402 (plan limit) responses globally.
 api.interceptors.response.use(
     (response) => response,
     (error) => {
-        if (error.response?.status === 401) {
+        const status = error.response?.status;
+
+        if (status === 401) {
             if (typeof window !== 'undefined') {
                 // Don't auto-redirect from super admin — the page handles its own auth flow
                 const isSuperAdminRoute = window.location.pathname.startsWith('/voxly-admin');
@@ -34,6 +48,15 @@ api.interceptors.response.use(
                 }
             }
         }
+
+        // Plan limit reached → surface an upgrade prompt instead of a raw error.
+        if (status === 402 && typeof window !== 'undefined') {
+            const detail = error.response?.data?.detail;
+            if (detail?.error === 'plan_limit_reached') {
+                window.dispatchEvent(new CustomEvent<PlanLimitDetail>(PLAN_LIMIT_EVENT, { detail }));
+            }
+        }
+
         return Promise.reject(error);
     }
 );

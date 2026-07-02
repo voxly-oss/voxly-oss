@@ -78,7 +78,7 @@ async def create_checkout_session(*,
 ):
     """Create a checkout session for Stripe or Razorpay."""
     
-    plan = db.query(Plan).filter(Plan.id == request.plan_id).first()
+    plan = db.query(Plan).filter(Plan.id == payload.plan_id).first()
     if not plan:
         raise HTTPException(status_code=404, detail="Plan not found")
     
