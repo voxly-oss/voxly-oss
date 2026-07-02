@@ -12,6 +12,12 @@ class Settings(BaseSettings):
     SECRET_KEY: str
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 30
+
+    # Dedicated secret for encrypting stored BYOK AI keys. Kept separate from
+    # SECRET_KEY so rotating the JWT signing key never bricks stored keys (and
+    # vice versa). Falls back to SECRET_KEY when unset for backward compatibility.
+    ENCRYPTION_KEY: str = ""
 
     # Internal service auth (WhatsApp webhook → handle_chat)
     # Generate with: python -c "import secrets; print(secrets.token_hex(32))"

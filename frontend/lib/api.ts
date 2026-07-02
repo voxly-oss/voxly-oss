@@ -32,20 +32,61 @@ export type PlanLimitDetail = {
 /** Custom event name the global UpgradeModal listens for. */
 export const PLAN_LIMIT_EVENT = 'voxly:plan-limit';
 
-// Handle 401 (auth) and 402 (plan limit) responses globally.
+// ─── Silent refresh-token rotation ───
+// On a 401, transparently exchange the stored refresh token for a new access
+// token and retry the original request once, so short-lived access tokens don't
+// log the user out mid-session. A single-flight promise coalesces concurrent 401s.
+let refreshInFlight: Promise<string | null> | null = null;
+
+async function tryRefreshToken(): Promise<string | null> {
+    if (typeof window === 'undefined') return null;
+    const refresh_token = localStorage.getItem('refresh_token');
+    if (!refresh_token) return null;
+
+    if (!refreshInFlight) {
+        refreshInFlight = axios
+            .post(`${api.defaults.baseURL}/api/v1/auth/token/refresh`, { refresh_token })
+            .then((res) => {
+                const { access_token, refresh_token: rotated } = res.data;
+                localStorage.setItem('access_token', access_token);
+                if (rotated) localStorage.setItem('refresh_token', rotated);
+                return access_token as string;
+            })
+            .catch(() => null)
+            .finally(() => { refreshInFlight = null; });
+    }
+    return refreshInFlight;
+}
+
+function forceLogout() {
+    if (typeof window === 'undefined') return;
+    localStorage.removeItem('access_token');
+    localStorage.removeItem('refresh_token');
+    window.location.href = '/login';
+}
+
+// Handle 401 (auth, with silent refresh) and 402 (plan limit) responses globally.
 api.interceptors.response.use(
     (response) => response,
-    (error) => {
+    async (error) => {
         const status = error.response?.status;
+        const original = error.config || {};
 
-        if (status === 401) {
-            if (typeof window !== 'undefined') {
-                // Don't auto-redirect from super admin — the page handles its own auth flow
-                const isSuperAdminRoute = window.location.pathname.startsWith('/voxly-admin');
-                if (!isSuperAdminRoute) {
-                    localStorage.removeItem('access_token');
-                    window.location.href = '/login';
+        if (status === 401 && typeof window !== 'undefined') {
+            const isSuperAdminRoute = window.location.pathname.startsWith('/voxly-admin');
+            const isRefreshCall = (original.url || '').includes('/auth/token/refresh');
+
+            // Attempt one silent refresh + retry before giving up.
+            if (!isSuperAdminRoute && !isRefreshCall && !original._retry) {
+                const newToken = await tryRefreshToken();
+                if (newToken) {
+                    original._retry = true;
+                    original.headers = { ...original.headers, Authorization: `Bearer ${newToken}` };
+                    return api(original);
                 }
+                forceLogout();
+            } else if (!isSuperAdminRoute && !isRefreshCall) {
+                forceLogout();
             }
         }
 
@@ -80,6 +121,10 @@ export const authAPI = {
     }) => api.post('/api/v1/auth/register', data),
     me: () => api.get('/api/v1/auth/me'),
     refresh: () => api.post('/api/v1/auth/refresh'),
+    refreshToken: (refresh_token: string) =>
+        api.post('/api/v1/auth/token/refresh', { refresh_token }),
+    logout: (refresh_token: string) =>
+        api.post('/api/v1/auth/logout', { refresh_token }),
     updateProfile: (data: {
         full_name?: string;
         agency_name?: string;

@@ -46,6 +46,12 @@ class Token(BaseModel):
     """Schema for JWT token response."""
     access_token: str
     token_type: str = "bearer"
+    refresh_token: Optional[str] = None
+
+
+class RefreshRequest(BaseModel):
+    """Schema for exchanging a refresh token for a new access token."""
+    refresh_token: str
 
 
 class TokenData(BaseModel):

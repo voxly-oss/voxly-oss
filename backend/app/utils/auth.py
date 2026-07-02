@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 from uuid import UUID
 import hashlib
+import secrets
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
@@ -99,6 +100,75 @@ def verify_reset_token(token: str) -> Optional[str]:
         return payload.get("sub")
     except InvalidTokenError:
         return None
+
+
+def _hash_refresh_token(token: str) -> str:
+    """SHA-256 of a refresh token for storage/lookup (never store plaintext)."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def issue_refresh_token(db: Session, user_id) -> str:
+    """Create and persist a new refresh token; return the plaintext (shown once)."""
+    from app.models.refresh_token import RefreshToken
+
+    plaintext = secrets.token_urlsafe(48)
+    expires = datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+    db.add(RefreshToken(
+        user_id=user_id,
+        token_hash=_hash_refresh_token(plaintext),
+        expires_at=expires,
+    ))
+    db.commit()
+    return plaintext
+
+
+def rotate_refresh_token(db: Session, token: str):
+    """Validate a refresh token and rotate it (single-use).
+
+    Returns the owning User on success, or None if the token is unknown,
+    revoked, or expired. The old token is always revoked on a valid use.
+    """
+    from app.models.refresh_token import RefreshToken
+
+    row = (
+        db.query(RefreshToken)
+        .filter(RefreshToken.token_hash == _hash_refresh_token(token))
+        .first()
+    )
+    if row is None or row.revoked_at is not None:
+        return None, None
+
+    now = datetime.now(timezone.utc)
+    expires_at = row.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at < now:
+        return None, None
+
+    # Rotate: revoke the presented token, mint a fresh one.
+    row.revoked_at = now
+    db.commit()
+    user = db.query(User).filter(User.id == row.user_id).first()
+    if user is None or not user.is_active:
+        return None, None
+    new_token = issue_refresh_token(db, user.id)
+    return user, new_token
+
+
+def revoke_refresh_token(db: Session, token: str) -> bool:
+    """Revoke a refresh token (logout). Returns True if a live token was revoked."""
+    from app.models.refresh_token import RefreshToken
+
+    row = (
+        db.query(RefreshToken)
+        .filter(RefreshToken.token_hash == _hash_refresh_token(token))
+        .first()
+    )
+    if row is None or row.revoked_at is not None:
+        return False
+    row.revoked_at = datetime.now(timezone.utc)
+    db.commit()
+    return True
 
 
 async def get_current_user(

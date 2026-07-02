@@ -63,6 +63,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async function login(email: string, password: string) {
         const { data } = await authAPI.login(email, password);
         localStorage.setItem('access_token', data.access_token);
+        if (data.refresh_token) localStorage.setItem('refresh_token', data.refresh_token);
         setToken(data.access_token);
         const { data: userData } = await authAPI.me();
         setUser(userData);
@@ -75,6 +76,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async function loginWithGoogle(googleToken: string) {
         const { data } = await authAPI.googleLogin(googleToken);
         localStorage.setItem('access_token', data.access_token);
+        if (data.refresh_token) localStorage.setItem('refresh_token', data.refresh_token);
         setToken(data.access_token);
         const { data: userData } = await authAPI.me();
         setUser(userData);
@@ -92,7 +94,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     function logout() {
+        // Best-effort server-side revoke of the refresh token.
+        const refresh = typeof window !== 'undefined' ? localStorage.getItem('refresh_token') : null;
+        if (refresh) authAPI.logout(refresh).catch(() => { /* ignore */ });
         localStorage.removeItem('access_token');
+        localStorage.removeItem('refresh_token');
         setToken(null);
         setUser(null);
         router.push('/login');

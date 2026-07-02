@@ -19,6 +19,7 @@ from app.schemas.user import (
     UserResponse,
     Token,
     UserLogin,
+    RefreshRequest,
     PasswordResetRequest,
     PasswordResetConfirm,
 )
@@ -29,6 +30,9 @@ from app.utils.auth import (
     get_current_user,
     create_reset_token,
     verify_reset_token,
+    issue_refresh_token,
+    rotate_refresh_token,
+    revoke_refresh_token,
 )
 from app.rate_limit import limiter
 from app.services.email_service import send_password_reset_email
@@ -89,6 +93,7 @@ class GoogleAuthResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     is_new_user: bool = False
+    refresh_token: str | None = None
 
 
 @router.post("/google", response_model=GoogleAuthResponse)
@@ -187,10 +192,12 @@ async def google_auth(*,
         data={"sub": str(user.id), "email": user.email},
         expires_delta=access_token_expires,
     )
+    refresh_token = issue_refresh_token(db, user.id)
 
     return GoogleAuthResponse(
         access_token=access_token,
         is_new_user=is_new_user,
+        refresh_token=refresh_token,
     )
 
 
@@ -322,8 +329,14 @@ async def github_callback(*,
         data={"sub": str(user.id), "email": user.email},
         expires_delta=access_token_expires,
     )
+    refresh_token = issue_refresh_token(db, user.id)
     response = JSONResponse(
-        {"access_token": access_token, "token_type": "bearer", "is_new_user": is_new_user}
+        {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "is_new_user": is_new_user,
+            "refresh_token": refresh_token,
+        }
     )
     response.delete_cookie(_get_oauth_cookie_name("github"))
     return response
@@ -397,14 +410,15 @@ async def login(*,
             detail=USER_ACCOUNT_DEACTIVATED
         )
     
-    # Create access token
+    # Create access token + rotating refresh token
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
         data={"sub": str(user.id), "email": user.email},
         expires_delta=access_token_expires
     )
-    
-    return Token(access_token=access_token, token_type="bearer")
+    refresh_token = issue_refresh_token(db, user.id)
+
+    return Token(access_token=access_token, token_type="bearer", refresh_token=refresh_token)
 
 
 @router.post("/refresh", response_model=Token)
@@ -421,8 +435,48 @@ async def refresh_token(*,
     return Token(access_token=access_token, token_type="bearer")
 
 
+@router.post(
+    "/token/refresh",
+    response_model=Token,
+    responses={401: {"description": "Invalid, expired, or revoked refresh token"}},
+)
+@limiter.limit("30/minute")
+async def refresh_access_token(*,
+    request: Request,
+    payload: RefreshRequest,
+    db: Annotated[Session , Depends(get_db)],
+):
+    """Exchange a refresh token for a new access token (rotates the refresh token).
+
+    Enables silent, long-lived sessions without keeping the user logged in via a
+    long-lived access token. The presented refresh token is single-use.
+    """
+    user, new_refresh = rotate_refresh_token(db, payload.refresh_token)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired refresh token",
+        )
+    access_token = create_access_token(
+        data={"sub": str(user.id), "email": user.email},
+        expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
+    )
+    return Token(access_token=access_token, token_type="bearer", refresh_token=new_refresh)
+
+
+@router.post("/logout", status_code=status.HTTP_200_OK)
+async def logout(*,
+    payload: RefreshRequest,
+    db: Annotated[Session , Depends(get_db)],
+):
+    """Revoke a refresh token so it can no longer be used (server-side logout)."""
+    revoke_refresh_token(db, payload.refresh_token)
+    # Always 200 — revoking an unknown/expired token is a no-op, not an error.
+    return {"message": "Logged out"}
+
+
 @router.get("/me", response_model=UserResponse)
-async def get_me(*, 
+async def get_me(*,
     current_user: Annotated[User , Depends(get_current_user)],
 ):
     """Get current authenticated user profile."""
