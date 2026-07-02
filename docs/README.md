@@ -11,6 +11,8 @@ Welcome to the Voxly developer documentation hub.
 | [DATABASE.md](./DATABASE.md) | Full database schema with ER diagram, all tables and columns |
 | [API_CONTRACT.md](./API_CONTRACT.md) | Every API endpoint: method, path, auth, request/response |
 | [CONTRIBUTING.md](./CONTRIBUTING.md) | Git workflow, commit conventions, PR checklist, code style |
+| [DUE_DILIGENCE.md](./DUE_DILIGENCE.md) | Evidence-based product/technical review: findings F1–F20, scorecard |
+| [IMPLEMENTATION_PLAN.md](./IMPLEMENTATION_PLAN.md) | Production + B2B roadmap: P0 fixes → enterprise, with code & data-model changes |
 
 ## 🚀 Quick Start
 
