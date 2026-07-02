@@ -76,6 +76,12 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     RATE_LIMIT_PER_MINUTE: int = 60  # Auth endpoints rate limit
 
+    # When True, inbound webhook processing is dispatched to Celery (durable,
+    # survives restarts, retried). When False (default), it runs in-process via
+    # FastAPI BackgroundTasks — fine for local dev/tests with no worker running.
+    # Production should set USE_CELERY=true and run `celery -A app.tasks.celery_app worker`.
+    USE_CELERY: bool = False
+
     model_config = ConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

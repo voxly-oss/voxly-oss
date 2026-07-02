@@ -80,12 +80,14 @@ async def telegram_webhook(*, request: Request, background_tasks: BackgroundTask
         )
         return {"status": "start_handled"}
 
-    # Process in background
-    background_tasks.add_task(
+    # Durable via Celery when enabled, else in-process background task.
+    from app.tasks.dispatch import dispatch
+    from app.tasks.messaging_tasks import process_telegram_message_task
+    dispatch(
+        background_tasks,
+        process_telegram_message_task,
         _process_telegram_message,
-        chat_id,
-        text,
-        photo_file_id,
+        chat_id, text, photo_file_id,
         str(update_id) if update_id is not None else None,
     )
 

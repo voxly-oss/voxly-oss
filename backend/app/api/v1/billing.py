@@ -4,6 +4,8 @@ Billing & Subscription Routes
 Handles plans, subscriptions, checkout sessions, webhooks, and usage stats.
 Supports dual gateways: Stripe (international) and Razorpay (India).
 """
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 from typing import Annotated, Optional
@@ -170,6 +172,16 @@ async def _create_razorpay_checkout(user, plan, price):
         raise HTTPException(status_code=500, detail="Failed to create payment order")
 
 
+def _ts_to_dt(ts) -> Optional[datetime]:
+    """Convert a Stripe unix timestamp to an aware datetime (or None)."""
+    if not ts:
+        return None
+    try:
+        return datetime.fromtimestamp(int(ts), tz=timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
 def _handle_stripe_checkout_completed(db: Session, session: dict) -> None:
     user_id = session["metadata"]["user_id"]
     plan_id = session["metadata"]["plan_id"]
@@ -200,6 +212,24 @@ def _handle_stripe_checkout_completed(db: Session, session: dict) -> None:
 
     db.commit()
     logger.info(f"Stripe subscription activated for user {user_id}")
+
+
+def _handle_stripe_subscription_updated(db: Session, sub_data: dict) -> None:
+    """Sync status and billing-period window from a Stripe subscription object."""
+    subscription = db.query(Subscription).filter(
+        Subscription.gateway_subscription_id == sub_data.get("id")
+    ).first()
+    if not subscription:
+        return
+
+    status_value = sub_data.get("status")
+    if status_value:
+        subscription.status = status_value
+    subscription.cancel_at_period_end = bool(sub_data.get("cancel_at_period_end"))
+    subscription.current_period_start = _ts_to_dt(sub_data.get("current_period_start"))
+    subscription.current_period_end = _ts_to_dt(sub_data.get("current_period_end"))
+    db.commit()
+    logger.info(f"Stripe subscription updated for user {subscription.user_id} (status={status_value})")
 
 
 def _handle_stripe_subscription_deleted(db: Session, sub_data: dict) -> None:
@@ -269,12 +299,21 @@ async def stripe_webhook(*, request: Request, db: Annotated[Session , Depends(ge
     except Exception as e:
         logger.error(f"Stripe webhook signature verification failed: {e}")
         raise HTTPException(status_code=400, detail="Invalid signature")
-    
-    if event["type"] == "checkout.session.completed":
+
+    # Idempotency — Stripe retries deliveries; process each event id once.
+    from app.services.messaging_core import is_duplicate_message
+    if is_duplicate_message(db, "stripe", event.get("id")):
+        logger.info(f"Duplicate Stripe event {event.get('id')} — skipped")
+        return {"status": "duplicate"}
+
+    event_type = event["type"]
+    if event_type == "checkout.session.completed":
         _handle_stripe_checkout_completed(db, event["data"]["object"])
-    elif event["type"] == "customer.subscription.deleted":
+    elif event_type in ("customer.subscription.updated", "customer.subscription.created"):
+        _handle_stripe_subscription_updated(db, event["data"]["object"])
+    elif event_type == "customer.subscription.deleted":
         _handle_stripe_subscription_deleted(db, event["data"]["object"])
-    
+
     return {"status": "ok"}
 
 
@@ -301,10 +340,16 @@ async def razorpay_webhook(*, request: Request, db: Annotated[Session , Depends(
         raise HTTPException(status_code=400, detail="Invalid signature")
     
     event = payload.get("event")
-    
+
     if event == "payment.captured":
-        _handle_razorpay_payment_captured(db, payload["payload"]["payment"]["entity"])
-    
+        payment_entity = payload["payload"]["payment"]["entity"]
+        # Idempotency — dedupe on the Razorpay payment id.
+        from app.services.messaging_core import is_duplicate_message
+        if is_duplicate_message(db, "razorpay", payment_entity.get("id")):
+            logger.info(f"Duplicate Razorpay payment {payment_entity.get('id')} — skipped")
+            return {"status": "duplicate"}
+        _handle_razorpay_payment_captured(db, payment_entity)
+
     return {"status": "ok"}
 
 

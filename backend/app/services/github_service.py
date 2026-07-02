@@ -8,7 +8,17 @@ import asyncio
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-github_client = Github(settings.GITHUB_TOKEN)
+# Lazily created so importing this module never fails when GITHUB_TOKEN is
+# unset (dev/test/Celery worker boot). PyGithub asserts a non-empty token at
+# construction, so we only build the client on first actual use.
+_github_client = None
+
+
+def get_github_client() -> Github:
+    global _github_client
+    if _github_client is None:
+        _github_client = Github(settings.GITHUB_TOKEN)
+    return _github_client
 
 
 def _utc_now() -> datetime:
@@ -26,7 +36,7 @@ async def fetch_github_stats(repo_name: str) -> Dict:
         Dictionary with GitHub stats
     """
     def _fetch_sync() -> Dict:
-        repo = github_client.get_repo(repo_name)
+        repo = get_github_client().get_repo(repo_name)
 
         # Get commits from last 7 days
         since_date = datetime.now() - timedelta(days=7)

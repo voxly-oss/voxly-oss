@@ -125,8 +125,14 @@ async def github_webhook(*, request: Request, background_tasks: BackgroundTasks)
 
         logger.info(f"Received GitHub event: {event_type}")
 
+        from app.tasks.dispatch import dispatch
+        from app.tasks.messaging_tasks import (
+            notify_client_on_push_task,
+            analyze_build_failure_task,
+        )
+
         if event_type == "push":
-            background_tasks.add_task(notify_client_on_push, payload)
+            dispatch(background_tasks, notify_client_on_push_task, notify_client_on_push, payload)
 
         elif event_type == "workflow_run":
             action = payload.get("action")
@@ -136,7 +142,7 @@ async def github_webhook(*, request: Request, background_tasks: BackgroundTasks)
             logger.info(f"Workflow Run: {action}, Conclusion: {conclusion}")
 
             if action == "completed" and conclusion == "failure":
-                background_tasks.add_task(analyze_build_failure, payload)
+                dispatch(background_tasks, analyze_build_failure_task, analyze_build_failure, payload)
 
         return {"status": "received"}
 

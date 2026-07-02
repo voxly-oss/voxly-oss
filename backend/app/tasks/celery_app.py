@@ -30,5 +30,8 @@ celery_app.conf.beat_schedule = {
     },
 }
 
-# Import tasks to register them
+# Import task modules explicitly so @shared_task tasks are registered on the
+# worker. autodiscover only finds a `tasks.py` per package; ours are named
+# differently (messaging_tasks.py, github_sync.py), so we import them here.
+from app.tasks import github_sync, messaging_tasks  # noqa: E402,F401
 celery_app.autodiscover_tasks(['app.tasks'])

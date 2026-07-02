@@ -44,6 +44,7 @@ services:
     environment:
       DATABASE_URL: postgresql://voxly:voxly@postgres:5432/voxly
       REDIS_URL: redis://redis:6379
+      USE_CELERY: "true"
     depends_on:
       postgres:
         condition: service_healthy
@@ -54,6 +55,45 @@ services:
     command: >
       sh -c "alembic upgrade head &&
              uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+
+  # ─── Celery Worker (durable inbound-webhook + GitHub-sync processing) ───
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: postgresql://voxly:voxly@postgres:5432/voxly
+      REDIS_URL: redis://redis:6379
+      USE_CELERY: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=4
+
+  # ─── Celery Beat (scheduled jobs, e.g. hourly GitHub sync) ───
+  beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: postgresql://voxly:voxly@postgres:5432/voxly
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    command: celery -A app.tasks.celery_app beat --loglevel=info
 
   # ─── Frontend (Next.js) ───
   frontend:

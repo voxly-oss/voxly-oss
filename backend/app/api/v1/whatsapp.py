@@ -77,13 +77,14 @@ async def whatsapp_webhook(*,
             logger.warning("Invalid webhook data received — missing phone or body")
             return {"status": "ignored", "reason": "missing_data"}
 
-        # Process in background
-        background_tasks.add_task(
+        # Durable via Celery when enabled, else in-process background task.
+        from app.tasks.dispatch import dispatch
+        from app.tasks.messaging_tasks import process_whatsapp_message_task
+        dispatch(
+            background_tasks,
+            process_whatsapp_message_task,
             _process_whatsapp_message,
-            from_number,
-            message_body,
-            message_sid,
-            media_url
+            from_number, message_body, message_sid, media_url,
         )
 
         return {"status": "processing"}
