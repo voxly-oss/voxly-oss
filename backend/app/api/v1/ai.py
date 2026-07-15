@@ -75,9 +75,9 @@ async def _build_project_context(
 
 @router.post("/chat", response_model=AdminChatResponse)
 @limiter.limit("20/minute")
-async def admin_chat(*, 
-    request: AdminChatRequest,
-    raw_request: Request,
+async def admin_chat(*,
+    request: Request,
+    chat_request: AdminChatRequest,
     current_user: Annotated[User , Depends(get_current_user)],
     db: Annotated[Session , Depends(get_db)],
 ):
@@ -86,7 +86,7 @@ async def admin_chat(*,
     Capable of using tools to fetch project status, github stats, etc.
     """
     agent = VoxlyAgent()
-    
+
     # Construct a system prompt based on user role
     system_prompt = (
         f"You are Voxly, the AI Project Manager for {current_user.agency_name}. "
@@ -95,21 +95,21 @@ async def admin_chat(*,
         "You have access to GitHub tools and Documentation tools. "
         "Use them proactively to check project health."
     )
-    
+
     # ── Context Enhancement ──
-    context_data = await _build_project_context(request.context, current_user, db)
+    context_data = await _build_project_context(chat_request.context, current_user, db)
 
     # Append context to system prompt or message?
     # VoxlyAgent.chat takes `context` arg, but let's append to system prompt to be sure it sets the scene.
     if context_data:
         system_prompt += context_data
-    
+
     # Call the agent
     try:
         response_data = await agent.chat(
-            user_message=request.message,
+            user_message=chat_request.message,
             system_prompt=system_prompt,
-            context=request.context or ""
+            context=chat_request.context or ""
         )
     except Exception:
         logger.exception("AI CHAT ERROR")

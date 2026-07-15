@@ -224,8 +224,24 @@ async def override_user_plan(*,
     if not user:
         raise HTTPException(status_code=404, detail=USER_NOT_FOUND)
 
+    plan = db.query(Plan).filter(Plan.slug == payload.subscription_tier).first()
+    if not plan:
+        raise HTTPException(status_code=400, detail=f"Unknown plan: {payload.subscription_tier}")
+
     old_tier = user.subscription_tier
     user.subscription_tier = payload.subscription_tier
+
+    # billing.py::get_usage_stats reads limits from the Subscription table,
+    # not subscription_tier — keep both in sync, mirroring the same
+    # find-or-create pattern the Stripe/Razorpay webhook handlers use.
+    subscription = db.query(Subscription).filter(Subscription.user_id == user_id).first()
+    if subscription:
+        subscription.plan_id = plan.id
+        subscription.status = "active"
+    else:
+        subscription = Subscription(user_id=user_id, plan_id=plan.id, status="active")
+        db.add(subscription)
+
     db.commit()
 
     logger.info(f"Super admin changed {user.email} plan: {old_tier} → {payload.subscription_tier}")

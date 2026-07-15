@@ -169,13 +169,21 @@ async def list_providers(*,
     current_user: Annotated[User , Depends(get_current_user)],
     db: Annotated[Session , Depends(get_db)],
 ):
-    """List all supported AI providers and whether the user has a key for each."""
+    """List AI providers with a real implementation, and whether the user has a key for each.
+
+    SUPPORTED_PROVIDERS has entries for providers that are scaffolded but not
+    yet implemented in app.services.ai_providers.PROVIDERS — those are kept
+    out of this customer-facing list until they're real. Adding a provider to
+    PROVIDERS is enough to make it reappear here automatically.
+    """
+    from app.services.ai_providers import PROVIDERS as IMPLEMENTED_PROVIDERS
+
     user_keys = db.query(UserAIKey).filter(
         UserAIKey.user_id == current_user.id,
         UserAIKey.is_active == True,
     ).all()
     user_provider_set = {k.provider for k in user_keys}
-    
+
     return [
         AIKeyProviderInfo(
             id=pid,
@@ -186,6 +194,7 @@ async def list_providers(*,
             has_key=pid in user_provider_set,
         )
         for pid, info in SUPPORTED_PROVIDERS.items()
+        if pid in IMPLEMENTED_PROVIDERS
     ]
 
 
@@ -228,10 +237,12 @@ async def add_ai_key(*,
     db: Annotated[Session , Depends(get_db)],
 ):
     """Add or replace an AI API key for a provider."""
-    if data.provider not in SUPPORTED_PROVIDERS:
+    from app.services.ai_providers import PROVIDERS as IMPLEMENTED_PROVIDERS
+
+    if data.provider not in SUPPORTED_PROVIDERS or data.provider not in IMPLEMENTED_PROVIDERS:
         raise HTTPException(
             status_code=400,
-            detail=f"Unsupported provider: {data.provider}. Supported: {', '.join(SUPPORTED_PROVIDERS.keys())}",
+            detail=f"Unsupported provider: {data.provider}. Supported: {', '.join(IMPLEMENTED_PROVIDERS.keys())}",
         )
     
     # Deactivate existing key for this provider (one active key per provider)
