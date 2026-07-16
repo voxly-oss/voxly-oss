@@ -974,7 +974,7 @@ export default function SettingsPage() {
                                     <SectionIcon icon={Bot} gradient="from-violet-500/30 to-purple-600/30" />
                                     <div>
                                         <h2 className="text-xl font-bold text-white">AI Keys (BYOK)</h2>
-                                        <p className="text-white/40 text-sm">Bring your own API keys — Claude, OpenAI, Gemini, DeepSeek, Groq & more</p>
+                                        <p className="text-white/40 text-sm">Bring your own API keys — Claude, OpenAI, or Gemini</p>
                                     </div>
                                 </div>
                             </SpotlightCard>

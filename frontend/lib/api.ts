@@ -55,6 +55,8 @@ export const authAPI = {
         agency_name?: string;
         phone?: string;
     }) => api.post('/api/v1/auth/register', data),
+    // NOTE: me() uses the shared intercepted instance — do NOT call from /voxly-admin.
+    // Use checkAdminSession() instead which uses the isolated adminApi.
     me: () => api.get('/api/v1/auth/me'),
     refresh: () => api.post('/api/v1/auth/refresh'),
     updateProfile: (data: {
@@ -257,5 +259,11 @@ export const superAdminAPI = {
     getActivity: (adminSecret: string, limit = 50) =>
         adminApi.get(`/voxly-admin/activity?limit=${limit}`, { headers: { 'X-Admin-Secret': adminSecret } }),
 };
+
+
+// ─── Admin Session Check (NO 401 redirect — safe for /voxly-admin) ───────────
+// Always use this on the /voxly-admin page instead of authAPI.me()
+// authAPI.me() goes through the shared interceptor which WILL redirect to /login
+export const checkAdminSession = () => adminApi.get('/api/v1/auth/me');
 
 export default api;
