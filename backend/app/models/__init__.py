@@ -9,6 +9,10 @@ from app.models.subscription import Subscription
 from app.models.api_key import APIKey
 from app.models.usage_log import UsageLog
 from app.models.user_ai_key import UserAIKey
+from app.models.role import Role
+from app.models.organization import Organization
+from app.models.membership import Membership
+from app.models.invitation import Invitation
 
 __all__ = [
     "User",
@@ -22,4 +26,8 @@ __all__ = [
     "APIKey",
     "UsageLog",
     "UserAIKey",
+    "Role",
+    "Organization",
+    "Membership",
+    "Invitation",
 ]

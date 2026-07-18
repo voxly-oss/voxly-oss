@@ -11,6 +11,7 @@ from app.models.client import Client
 from app.models.project import Project
 from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectResponse
 from app.utils.auth import get_current_user
+from app.utils.tenant_context import TenantContext, get_tenant_context
 
 router = APIRouter()
 PROJECT_NOT_FOUND = "Project not found"
@@ -49,11 +50,12 @@ async def list_projects(*,
 
 
 @router.post("", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
-async def create_project(*, 
+async def create_project(*,
     project_data: ProjectCreate,
     background_tasks: BackgroundTasks,
     db: Annotated[Session , Depends(get_db)],
     current_user: Annotated[User , Depends(get_current_user)],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
 ):
     """Create a new project."""
     # Verify client belongs to current user
@@ -62,15 +64,16 @@ async def create_project(*,
         .filter(Client.id == project_data.client_id, Client.user_id == current_user.id)
         .first()
     )
-    
+
     if not client:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Client not found or access denied"
         )
-    
+
     db_project = Project(
         client_id=project_data.client_id,
+        org_id=tenant.org_id,  # Phase 1 Milestone 3 dual-write; None when the flag is off
         name=project_data.name,
         description=project_data.description,
         github_repo=project_data.github_repo,

@@ -13,7 +13,8 @@ class APIKey(Base):
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    
+    org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=True, index=True)
+
     # Key storage — only hash is stored, never plaintext
     key_hash = Column(String(255), nullable=False)
     key_prefix = Column(String(20), nullable=False, index=True)  # "pv_live_a1b2c3d4" for lookup

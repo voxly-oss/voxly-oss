@@ -5,6 +5,7 @@ Tracks API usage per key/user via Redis counters.
 Periodically flushed to PostgreSQL for persistent storage.
 """
 import logging
+import uuid
 from datetime import date, datetime
 from typing import Optional
 from sqlalchemy.orm import Session
@@ -114,32 +115,49 @@ class UsageTracker:
         Called periodically by Celery or on-demand.
         """
         from app.models.usage_log import UsageLog
-        
+        from app.models.user import User
+        from app.utils.tenant_context import resolve_tenant_context
+
         today = date.today()
         today_str = today.isoformat()
-        
+
         try:
             count = await self.get_usage_today(user_id)
             if count > 0:
+                # user_id arrives as a plain string (Redis key / Celery arg);
+                # coerce once so every DB filter/insert below binds correctly
+                # (a raw str against a UUID(as_uuid=True) column fails under
+                # SQLite; keep the original string for Redis/logging).
+                user_uuid = uuid.UUID(user_id)
+
                 # Upsert usage log
                 existing = db.query(UsageLog).filter(
-                    UsageLog.user_id == user_id,
+                    UsageLog.user_id == user_uuid,
                     UsageLog.date == today
                 ).first()
-                
+
+                # Background job -- no current_user/JWT here, so resolution
+                # goes through the plain callable (Phase 1 Milestone 3), not
+                # the FastAPI dependency. No-op when the flag is off.
+                user = db.query(User).filter(User.id == user_uuid).first()
+                org_id = resolve_tenant_context(db, user).org_id if user else None
+
                 if existing:
                     existing.request_count = count
+                    if org_id is not None and existing.org_id is None:
+                        existing.org_id = org_id
                 else:
                     log = UsageLog(
-                        user_id=user_id,
+                        user_id=user_uuid,
+                        org_id=org_id,
                         date=today,
                         request_count=count
                     )
                     db.add(log)
-                
+
                 db.commit()
                 logger.info(f"Flushed usage for user {user_id}: {count} requests")
-                
+
         except Exception as e:
             logger.error(f"Failed to flush usage to DB: {e}")
             db.rollback()

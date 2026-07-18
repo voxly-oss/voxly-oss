@@ -76,6 +76,17 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     RATE_LIMIT_PER_MINUTE: int = 60  # Auth endpoints rate limit
 
+    # Phase 1 Milestone 3: tenant dual-write (temporary migration scaffolding —
+    # see docs/TARGET_ARCHITECTURE.md and CLAUDE.md Phase 1 log). Both default
+    # OFF: flipping them on is a deploy-time decision, not a code change.
+    # With DUAL_WRITE_ORGANIZATIONS_ENABLED=False, tenant resolution performs
+    # zero DB queries and every write path behaves exactly as before Milestone 3.
+    DUAL_WRITE_ORGANIZATIONS_ENABLED: bool = False
+    # Independent of the above — gates an internal, response-invisible
+    # comparison read used to validate org_id-scoped queries before Phase 2
+    # ever cuts real reads over to them.
+    DUAL_READ_SHADOW_VERIFY_ENABLED: bool = False
+
     model_config = ConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

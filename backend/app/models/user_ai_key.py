@@ -13,6 +13,7 @@ class UserAIKey(Base):
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=True, index=True)
     provider = Column(String(50), nullable=False)  # "claude", "openai", "gemini"
     api_key_encrypted = Column(Text, nullable=False)  # Encrypted API key
     label = Column(String(100), nullable=True)  # e.g. "My Claude key"
