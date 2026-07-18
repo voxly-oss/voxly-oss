@@ -30,6 +30,7 @@ from app.utils.auth import (
     create_reset_token,
     verify_reset_token,
 )
+from app.utils.tenant_context import resolve_tenant_context
 from app.rate_limit import limiter
 from app.services.email_service import send_password_reset_email
 router = APIRouter()
@@ -175,6 +176,15 @@ async def google_auth(*,
             db.refresh(user)
             is_new_user = True
 
+            # Phase 1 Milestone 3: dual-write, in its own transaction after
+            # the User commit above (see /register). Best-effort: never
+            # fails sign-in. No-op when the flag is off.
+            try:
+                resolve_tenant_context(db, user)
+                db.commit()
+            except Exception:
+                db.rollback()
+
     if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -314,6 +324,15 @@ async def github_callback(*,
             db.refresh(user)
             is_new_user = True
 
+            # Phase 1 Milestone 3: dual-write, in its own transaction after
+            # the User commit above (see /register). Best-effort: never
+            # fails sign-in. No-op when the flag is off.
+            try:
+                resolve_tenant_context(db, user)
+                db.commit()
+            except Exception:
+                db.rollback()
+
     if not user.is_active:
         raise HTTPException(status_code=403, detail=USER_ACCOUNT_DEACTIVATED)
 
@@ -369,7 +388,17 @@ async def register(*,
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to create user"
         )
-    
+
+    # Phase 1 Milestone 3: dual-write, in its own transaction after the User
+    # commit above — a self-heal failure can never roll back the User that
+    # was already committed. Best-effort: never fails registration.
+    # No-op when DUAL_WRITE_ORGANIZATIONS_ENABLED=False.
+    try:
+        resolve_tenant_context(db, db_user)
+        db.commit()
+    except Exception:
+        db.rollback()
+
     return db_user
 
 

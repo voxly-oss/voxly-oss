@@ -14,7 +14,8 @@ from app.config import settings
 from app.database import Base
 from app.models import (
     User, Client, Project, Milestone, ChatHistory, GitHubCache,
-    Plan, Subscription, APIKey, UsageLog
+    Plan, Subscription, APIKey, UsageLog, UserAIKey,
+    Role, Organization, Membership, Invitation
 )
 
 # this is the Alembic Config object, which provides

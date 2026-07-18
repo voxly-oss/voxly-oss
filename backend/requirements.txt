@@ -8,6 +8,9 @@ pydantic-settings==2.13.1
 email-validator>=2.0.0
 PyJWT>=2.12.0         # replaces python-jose (CVE-2024-33664, CVE-2024-33663)
 passlib[bcrypt]==1.7.4
+bcrypt<4.1,>=4.0         # passlib 1.7.4 (unmaintained since ~2020) reads bcrypt.__about__.__version__,
+                         # removed in bcrypt>=4.1 -- unpinned bcrypt breaks all passlib-based hashing
+                         # (api_key_auth.py's generate_api_key/verify_api_key) with a ValueError at hash time
 python-multipart==0.0.22
 python-dotenv==1.2.2
 cryptography>=46.0.5      # direct dep (ai_keys.py) + Snyk security pin

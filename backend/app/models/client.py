@@ -13,6 +13,7 @@ class Client(Base):
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=True, index=True)
     name = Column(String(255), nullable=False)
     phone = Column(String(50), unique=True, nullable=False, index=True)
     email = Column(String(255), nullable=True)

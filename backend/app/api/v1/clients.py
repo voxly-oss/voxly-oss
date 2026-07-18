@@ -10,6 +10,7 @@ from app.models.user import User
 from app.models.client import Client
 from app.schemas.client import ClientCreate, ClientUpdate, ClientResponse
 from app.utils.auth import get_current_user
+from app.utils.tenant_context import TenantContext, get_tenant_context
 
 router = APIRouter()
 CLIENT_NOT_FOUND = "Client not found"
@@ -34,11 +35,12 @@ async def list_clients(*,
 
 
 @router.post("", response_model=ClientResponse, status_code=status.HTTP_201_CREATED)
-async def create_client(*, 
+async def create_client(*,
     client_data: ClientCreate,
     background_tasks: BackgroundTasks,
     db: Annotated[Session , Depends(get_db)],
     current_user: Annotated[User , Depends(get_current_user)],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
 ):
     """Create a new client."""
     # Check phone uniqueness within this user's clients only
@@ -52,16 +54,17 @@ async def create_client(*,
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="You already have a client with this phone number"
         )
-    
+
     db_client = Client(
         user_id=current_user.id,
+        org_id=tenant.org_id,  # Phase 1 Milestone 3 dual-write; None when the flag is off
         name=client_data.name,
         phone=client_data.phone,
         email=client_data.email,
         company=client_data.company,
         telegram_chat_id=client_data.telegram_chat_id,
     )
-    
+
     try:
         db.add(db_client)
         db.commit()
