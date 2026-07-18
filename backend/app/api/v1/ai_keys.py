@@ -9,6 +9,7 @@ import logging
 import base64
 from datetime import datetime, timezone
 from typing import Annotated, List, Optional
+from uuid import UUID
 import hashlib
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -20,6 +21,7 @@ from app.database import get_db
 from app.models.user import User
 from app.models.user_ai_key import UserAIKey
 from app.api.v1.auth import get_current_user
+from app.utils.tenant_context import TenantContext, get_tenant_context
 
 logger = logging.getLogger(__name__)
 
@@ -231,10 +233,11 @@ async def list_ai_keys(*,
     status_code=status.HTTP_201_CREATED,
     responses={400: {"description": "Unsupported provider"}},
 )
-async def add_ai_key(*, 
+async def add_ai_key(*,
     data: AIKeyCreate,
     current_user: Annotated[User , Depends(get_current_user)],
     db: Annotated[Session , Depends(get_db)],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
 ):
     """Add or replace an AI API key for a provider."""
     from app.services.ai_providers import PROVIDERS as IMPLEMENTED_PROVIDERS
@@ -259,6 +262,7 @@ async def add_ai_key(*,
     # Create new key
     new_key = UserAIKey(
         user_id=current_user.id,
+        org_id=tenant.org_id,  # Phase 1 Milestone 3 dual-write; None when the flag is off
         provider=data.provider,
         api_key_encrypted=_encrypt_key(data.api_key),
         label=data.label or f"My {SUPPORTED_PROVIDERS[data.provider]['name']} key",
@@ -290,7 +294,7 @@ async def add_ai_key(*,
     responses={404: {"description": "AI key not found"}},
 )
 async def delete_ai_key(*, 
-    key_id: str,
+    key_id: UUID,
     current_user: Annotated[User , Depends(get_current_user)],
     db: Annotated[Session , Depends(get_db)],
 ):
@@ -315,7 +319,7 @@ async def delete_ai_key(*,
     responses={404: {"description": "AI key not found"}},
 )
 async def validate_ai_key(*, 
-    key_id: str,
+    key_id: UUID,
     current_user: Annotated[User , Depends(get_current_user)],
     db: Annotated[Session , Depends(get_db)],
 ):
