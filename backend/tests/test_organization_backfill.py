@@ -8,7 +8,6 @@ here ever touches the production database that SessionLocal is bound to.
 import uuid
 from datetime import datetime
 
-import pytest
 from fastapi.testclient import TestClient
 
 from app.models.user import User

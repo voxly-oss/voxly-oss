@@ -18,7 +18,6 @@ from app.models.organization import Organization
 from app.models.membership import Membership
 from app.utils import tenant_metrics
 from app.utils.tenant_context import (
-    TenantContext,
     resolve_tenant_context,
     get_or_create_personal_org,
     ensure_owner_membership,
@@ -181,7 +180,7 @@ def test_get_or_create_personal_org_idempotent(db_session):
 
 
 def test_ensure_owner_membership_idempotent(db_session):
-    owner_role = _seed_owner_role(db_session)
+    _seed_owner_role(db_session)
     user = _make_user(db_session)
     org = get_or_create_personal_org(db_session, user)
     db_session.commit()

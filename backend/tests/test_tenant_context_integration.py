@@ -122,7 +122,7 @@ def test_flag_on_registration_failure_rolls_back_atomically(client: TestClient, 
     resolution -- no org is created for a registration that doesn't succeed."""
     _seed_owner_role(db_session)
     email = f"dup-{uuid.uuid4().hex[:8]}@example.com"
-    headers = _register_and_login(client, email)  # first registration succeeds
+    _register_and_login(client, email)  # first registration succeeds
 
     dup = client.post("/api/v1/auth/register", json={
         "email": email, "password": "Test1234", "full_name": "Test", "agency_name": "Acme",
