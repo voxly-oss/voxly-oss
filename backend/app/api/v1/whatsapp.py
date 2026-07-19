@@ -7,6 +7,7 @@ All business logic (AI, history, broadcast) is in messaging_core.py.
 from fastapi import APIRouter, Request, BackgroundTasks, HTTPException
 from app.services.whatsapp_service import send_whatsapp_message
 from app.services.messaging_core import find_client_by_phone, process_incoming_message
+from app.services.localization import detect_language, t
 from app.database import SessionLocal
 from app.config import settings
 from twilio.request_validator import RequestValidator
@@ -109,12 +110,13 @@ async def _process_whatsapp_message(
     """
     db = SessionLocal()
     try:
+        lang = detect_language(message)
         client = find_client_by_phone(db, phone)
         if not client:
             logger.warning("No client found for incoming WhatsApp message")
             await send_whatsapp_message(
                 phone,
-                "Sorry, I don't recognise your number. Please contact your project manager. 🙏"
+                t("wa_not_recognised", lang),
             )
             return
 
@@ -143,7 +145,7 @@ async def _process_whatsapp_message(
         try:
             await send_whatsapp_message(
                 phone,
-                "Sorry, something went wrong. Please try again later or contact support."
+                t("wa_error", detect_language(message)),
             )
         except Exception:
             pass

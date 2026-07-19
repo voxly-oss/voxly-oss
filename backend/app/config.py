@@ -93,6 +93,13 @@ class Settings(BaseSettings):
     # OPENAI_API_KEY for OpenAI's transcription API; degrades to no-op if unset.
     VOICE_TRANSCRIPTION_ENABLED: bool = False
 
+    # Agent Vision Phase 0 slice 2: detect the client's language and localize the
+    # fixed system strings (errors, onboarding). Default OFF — flag-off makes
+    # detect_language() return 'en' for everything, so every canned string keeps
+    # its exact current English text. AI-generated replies mirror language via
+    # the prompt regardless of this flag.
+    LANGUAGE_DETECTION_ENABLED: bool = False
+
     model_config = ConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

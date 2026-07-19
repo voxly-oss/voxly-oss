@@ -23,6 +23,7 @@ from app.models.milestone import Milestone
 from app.models.chat_history import ChatHistory
 from app.services.ai_service import generate_client_response
 from app.services.cache_service import get_github_stats_cached
+from app.services.localization import detect_language, t
 from app.services.transcription_service import transcribe_audio
 from app.websockets.manager import manager
 
@@ -209,7 +210,7 @@ async def process_incoming_message(
 
         reply = ai_result.get("response", "")
         if not reply:
-            reply = "Sorry, I couldn't generate a response right now. Please try again. \U0001f64f"
+            reply = t("ai_empty", detect_language(message))
 
         _save_chat_history(db, client, project, message, reply, ai_result, channel)
 
@@ -229,6 +230,6 @@ async def process_incoming_message(
             channel.upper(), client.name, elapsed_ms, e,
             exc_info=True,
         )
-        return "Sorry, something went wrong. Please try again later or contact support."
+        return t("pipeline_error", detect_language(message))
     finally:
         db.close()

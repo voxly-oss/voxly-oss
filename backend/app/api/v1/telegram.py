@@ -17,6 +17,7 @@ from app.config import settings
 from app.database import SessionLocal
 from app.services.telegram_service import send_telegram_message
 from app.services.messaging_core import find_client_by_telegram, process_incoming_message
+from app.services.localization import detect_language, t
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -106,15 +107,12 @@ async def _process_telegram_message(
     """Background task: process incoming Telegram message and send AI reply."""
     db = SessionLocal()
     try:
+        lang = detect_language(text)
         client = find_client_by_telegram(db, chat_id)
         if not client:
             await send_telegram_message(
                 chat_id,
-                (
-                    "Sorry, your Telegram account isn't linked to any client yet.\n\n"
-                    f"Your Chat ID is: `{chat_id}`\n"
-                    "Please share this with your project manager. 🙏"
-                ),
+                t("tg_not_linked", lang, chat_id=chat_id),
             )
             return
 
@@ -145,7 +143,7 @@ async def _process_telegram_message(
         try:
             await send_telegram_message(
                 chat_id,
-                "Sorry, something went wrong. Please try again later.",
+                t("tg_error", detect_language(text)),
             )
         except Exception:
             pass
