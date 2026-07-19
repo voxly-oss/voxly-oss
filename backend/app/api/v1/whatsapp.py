@@ -70,6 +70,7 @@ async def whatsapp_webhook(*,
         message_body = form_data.get("Body", "")
         message_sid = form_data.get("MessageSid", "")
         media_url = form_data.get("MediaUrl0", None)
+        media_content_type = form_data.get("MediaContentType0", None)
 
         logger.info(f"Received WhatsApp message. Media present: {bool(media_url)}")
 
@@ -83,7 +84,8 @@ async def whatsapp_webhook(*,
             from_number,
             message_body,
             message_sid,
-            media_url
+            media_url,
+            media_content_type,
         )
 
         return {"status": "processing"}
@@ -99,7 +101,8 @@ async def _process_whatsapp_message(
     phone: str,
     message: str,
     message_sid: str,
-    media_url: str = None
+    media_url: str = None,
+    media_content_type: str = None,
 ):
     """
     Background task: process incoming WhatsApp message via shared messaging_core.
@@ -115,11 +118,18 @@ async def _process_whatsapp_message(
             )
             return
 
+        # Twilio media URLs require HTTP basic auth (Account SID / Auth Token).
+        media_auth = None
+        if media_url and settings.TWILIO_ACCOUNT_SID and settings.TWILIO_AUTH_TOKEN:
+            media_auth = (settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
+
         reply = await process_incoming_message(
             channel="whatsapp",
             client=client,
             message=message,
             media_url=media_url,
+            media_content_type=media_content_type,
+            media_auth=media_auth,
         )
 
         success = await send_whatsapp_message(to_number=phone, message=reply)

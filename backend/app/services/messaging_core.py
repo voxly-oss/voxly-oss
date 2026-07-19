@@ -15,6 +15,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.database import SessionLocal
 from app.models.client import Client
 from app.models.project import Project
@@ -22,6 +23,7 @@ from app.models.milestone import Milestone
 from app.models.chat_history import ChatHistory
 from app.services.ai_service import generate_client_response
 from app.services.cache_service import get_github_stats_cached
+from app.services.transcription_service import transcribe_audio
 from app.websockets.manager import manager
 
 logger = logging.getLogger(__name__)
@@ -126,11 +128,38 @@ async def _broadcast_incoming(client: Client, message: str, channel: str) -> Non
 
 # ── Main pipeline ─────────────────────────────────────────────────────────────
 
+async def _maybe_transcribe_voice(
+    channel: str,
+    message: str,
+    media_url: Optional[str],
+    media_content_type: Optional[str],
+    media_auth: Optional[tuple],
+) -> tuple[str, Optional[str]]:
+    """Phase 0: if the media is a voice note and transcription is enabled,
+    return (message_with_transcript, media_url_for_ai). Audio is consumed into
+    text, so it is not also forwarded as an image. Flag-off / non-audio / any
+    failure leaves both inputs unchanged."""
+    is_audio = bool(media_content_type) and media_content_type.split(";")[0].strip().lower().startswith("audio/")
+    if not (settings.VOICE_TRANSCRIPTION_ENABLED and media_url and is_audio):
+        return message, media_url
+
+    transcript = await transcribe_audio(media_url, media_content_type, media_auth)
+    if not transcript:
+        # Transcription failed — drop the (non-image) audio, keep any text body.
+        logger.warning("[%s] Voice transcription produced no text", channel.upper())
+        return message, None
+
+    combined = f"{message} {transcript}".strip() if message else transcript
+    return combined, None
+
+
 async def process_incoming_message(
     channel: str,
     client: Client,
     message: str,
     media_url: Optional[str] = None,
+    media_content_type: Optional[str] = None,
+    media_auth: Optional[tuple] = None,
 ) -> str:
     """
     Core AI pipeline shared by WhatsApp and Telegram.
@@ -140,6 +169,8 @@ async def process_incoming_message(
         client: The resolved Client ORM object
         message: Incoming message text
         media_url: Optional media attachment URL
+        media_content_type: Optional MIME type of the media (e.g. "audio/ogg")
+        media_auth: Optional (user, pass) for fetching the media (Twilio)
 
     Returns:
         The AI-generated reply string
@@ -147,6 +178,9 @@ async def process_incoming_message(
     start_ts = time.monotonic()
     db = SessionLocal()
     try:
+        message, media_url = await _maybe_transcribe_voice(
+            channel, message, media_url, media_content_type, media_auth,
+        )
         logger.info(
             "[%s] Incoming client=%r msg_len=%d media=%s",
             channel.upper(), client.name, len(message or ""), bool(media_url),

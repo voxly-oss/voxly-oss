@@ -34,16 +34,21 @@ _RETRYABLE_SIGNALS = (
 
 
 def _build_fallback_chain() -> list:
-    """Return ordered list of configured providers to try."""
+    """Return ordered list of configured providers to try.
+
+    Priority: Claude -> OpenAI -> Gemini. Claude is primary (funded, verified
+    working, best quality); OpenAI is the reliable fallback; Gemini sits last
+    because its free-tier key runs out of credits and returns 429.
+    """
     chain = []
-    if settings.GEMINI_API_KEY:
-        chain.append("gemini")
-    if settings.OPENAI_API_KEY:
-        chain.append("openai")
     if settings.ANTHROPIC_API_KEY:
         chain.append("claude")
-    if not chain:
+    if settings.OPENAI_API_KEY:
+        chain.append("openai")
+    if settings.GEMINI_API_KEY:
         chain.append("gemini")
+    if not chain:
+        chain.append("claude")
     return chain
 
 

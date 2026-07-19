@@ -87,6 +87,12 @@ class Settings(BaseSettings):
     # ever cuts real reads over to them.
     DUAL_READ_SHADOW_VERIFY_ENABLED: bool = False
 
+    # Agent Vision Phase 0 (see docs/AGENT_VISION_RESEARCH.md): transcribe
+    # inbound voice notes before the AI pipeline. Default OFF — flag-off is a
+    # byte-identical no-op (audio media keeps its pre-Phase-0 handling). Uses
+    # OPENAI_API_KEY for OpenAI's transcription API; degrades to no-op if unset.
+    VOICE_TRANSCRIPTION_ENABLED: bool = False
+
     model_config = ConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
