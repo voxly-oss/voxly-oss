@@ -81,6 +81,20 @@ def _serialize_project_milestones(db: Session, project: Optional[Project]) -> li
     ]
 
 
+def _detect_message_language(message: str) -> Optional[str]:
+    """Real detected language, or None when detection didn't actually run.
+
+    detect_language() returns 'en' unconditionally when LANGUAGE_DETECTION_ENABLED
+    is off — that's a safe no-op default for the canned-string layer, not a real
+    per-message detection result. Persisting it as if it were a genuine 'en'
+    detection would misrepresent a disabled feature as analyzed data, so this
+    returns None (-> NULL) whenever detection isn't actually enabled.
+    """
+    if not settings.LANGUAGE_DETECTION_ENABLED:
+        return None
+    return detect_language(message)
+
+
 def _save_chat_history(
     db: Session,
     client: Client,
@@ -93,6 +107,11 @@ def _save_chat_history(
     if not project:
         return
     try:
+        # On a failed AI turn, the persisted `reply` is a hardcoded apology,
+        # not model output — no real model produced it, so model_used is
+        # genuinely unknown (NULL), not the "error" sentinel that used to be
+        # stored here.
+        ai_succeeded = bool(ai_result.get("success"))
         chat_entry = ChatHistory(
             id=uuid.uuid4(),
             client_id=client.id,
@@ -100,8 +119,13 @@ def _save_chat_history(
             message=message or "",
             response=reply,
             tokens_used=ai_result.get("tokens_used", 0),
-            model_used=ai_result.get("model", "unknown"),
+            model_used=ai_result.get("model") if ai_succeeded else None,
             channel=channel,
+            language=_detect_message_language(message),
+            ai_response_time_ms=ai_result.get("latency_ms"),
+            # confidence/sentiment intentionally omitted — no real signal
+            # exists to populate them with; they stay NULL via the column
+            # default, per the "never fabricate" requirement.
         )
         db.add(chat_entry)
         db.commit()
