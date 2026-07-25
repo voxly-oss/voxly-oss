@@ -30,6 +30,11 @@ class Project(Base):
     milestones = relationship("Milestone", back_populates="project", cascade="all, delete-orphan")
     chat_history = relationship("ChatHistory", back_populates="project")
     github_cache = relationship("GitHubCache", back_populates="project", uselist=False, cascade="all, delete-orphan")
-    
+
+    @property
+    def github_stats(self):
+        """Alias for github_cache, matching ProjectResponse's `github_stats` field name."""
+        return self.github_cache
+
     def __repr__(self):
         return f"<Project {self.name}>"
