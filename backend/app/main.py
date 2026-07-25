@@ -87,6 +87,9 @@ app.include_router(ai_router, prefix="/api/v1/ai", tags=["AI Agent"])
 from app.api.v1.super_admin import router as super_admin_router
 app.include_router(super_admin_router, prefix="/voxly-admin", include_in_schema=False)
 
+from app.api.v1.channels import router as channels_router
+app.include_router(channels_router, prefix="/api/v1/channels", tags=["Channels"])
+
 
 @app.get("/", tags=["Root"])
 def root():
