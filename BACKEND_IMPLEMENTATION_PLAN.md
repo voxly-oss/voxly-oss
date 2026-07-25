@@ -199,9 +199,10 @@ Gap: `github_cache` is populated hourly but **never returned** by `GET /projects
 Mock: Activity Timeline, Documents section, Health Explanation panel, AI Memory & Context panel, Risks panel, repo overview strip (branch/PRs/build status) — all illustrative since no per-project activity log, document storage, or health-scoring model exists.
 
 ### Conversations (Conversation Center / `/messages`)
-🟡 **Partial.** Real: `chat_history` rows (client message + AI response + tokens + model), grouped client-side into conversations, real-time via `WS /chat/ws`, search/pagination against the real paginated endpoint.
+🟡 **Partial — corrected 2026-07-25, see §9.** Real: `chat_history` rows (client message + AI response + tokens + model), grouped client-side into conversations, search/pagination against the real paginated endpoint.
 Mock: confidence %, sentiment classification, SLA countdown — none of these are computed or stored anywhere (`chat_history` has no sentiment/confidence columns, no SLA concept exists).
 Status inference (Resolved/AI handling/Awaiting human) is a frontend heuristic based on `ai_response IS NULL` and message age, not a backend-computed state.
+**Correction:** the original claim "real-time via `WS /chat/ws`" overstated what actually happens today — the WebSocket connection itself works, but the one broadcast call in `messaging_core.py` sends `type: "incoming_message"` while the frontend only reacts to `type === "new_message"`, so live conversation updates never actually reach the UI; see §9 for the full finding.
 
 ### Channels
 🟡 **Partial.** Real: every row is derived from an actual client's `phone`/`email`/`telegram_chat_id`. No separate "channel connection" entity exists — a client having a phone number *is* the WhatsApp channel, structurally.
@@ -375,3 +376,44 @@ None in substance. One addition: a redeploy (Phase B, effectively re-run) was pe
 - Local `develop` is one commit ahead of `origin/develop` (`d3430d3`, the cache fix) — not pushed, per standing "don't push without being asked" policy.
 
 **Phase 1 (rollout-execution scope) is complete.** Stopping here per your instruction to provide a verification report before continuing to Phase 2 (Clients, Projects, Milestones, Channels).
+
+---
+
+## 9. Phase 3 Pre-Implementation Audit — Conversation Runtime — 2026-07-25
+
+Per your instruction, audited every file below before writing any Phase 3 code. Two corrections to prior claims (both already applied inline in §4 and here); everything else in the original audit held up.
+
+### 9.1 Files audited
+`app/models/chat_history.py`, `app/services/messaging_core.py`, `app/services/ai_service.py`, `app/services/ai_agent.py`, `app/api/v1/chat.py`, `app/websockets/manager.py`, `app/api/v1/whatsapp.py`, `app/api/v1/telegram.py`, `app/services/github_service.py`, `app/services/cache_service.py`, `app/services/notification_service.py`, `frontend/app/messages/page.tsx`, `frontend/hooks/useWebSocket.ts`, `frontend/lib/api.ts` (`chatAPI`), and the full `backend/tests/` directory listing.
+
+### 9.2 Correction #1 — WebSocket event-type mismatch (real-time is currently non-functional)
+`messaging_core.py`'s `_broadcast_incoming` (the **only** `manager.broadcast()` call site in the entire backend — verified via grep) sends:
+```python
+{"type": "incoming_message", "message": {"client_id", "client_name", "message", "channel"}}
+```
+`frontend/app/messages/page.tsx`'s WebSocket handler only reacts to:
+```ts
+if (lastMessage.type === 'new_message') { ... }
+```
+The type strings never match, so the Conversation Center's live-update code path (`useEffect` on `lastMessage`) never fires. There is also no `refetchInterval` on the messages query, so nothing else compensates — a new incoming message only appears after a manual page reload today. Two further problems in the same call site, useful context for Milestone 1/4 design:
+- It fires **before** the AI response is generated or saved — the payload structurally cannot carry the reply even if the type matched.
+- Its payload shape doesn't match the frontend's `ChatMessage` interface at all (no `id`, no `ai_response`, no `created_at`).
+
+### 9.3 Correction #2 — Field-name mismatch hides the AI reply in the UI
+`chat.py`'s `GET /messages` serializes each row with a `response` key (matching the `ChatHistory.response` column name). `frontend/app/messages/page.tsx`'s `ChatMessage` interface and render logic reads `m.ai_response` (`{m.ai_response && (...)}`, twice). Since the API client does a bare `as` type-cast with no runtime mapping, `m.ai_response` is `undefined` for every real message — **the AI's actual reply text never renders in the conversation thread today**, despite being present in the API response under a different key. This is independent of the WebSocket issue above; it affects the initial paginated load too, not just real-time updates.
+
+### 9.4 Confirmed-accurate findings (no correction needed)
+- Conversation status (`Resolved`/`AI handling`/`Awaiting human`) is 100% a frontend heuristic (`inferStatus()`, based on `ai_response IS NULL` + message age) — no backend state exists. Confirmed accurate; this is exactly Milestone 1's target.
+- Confidence and sentiment are 100% mock (`mockConfidence`/`mockSentiment`, hash-based, explicitly commented as such in the frontend). Confirmed accurate; Milestone 2's target.
+- `GET /api/v1/chat/messages` paginates at the **message** level, not the **conversation** level. The frontend groups whatever page of raw messages it has into client-keyed "conversations" client-side, so the displayed "N conversations" count and the conversation list itself are artifacts of pagination — a client with older messages that fell off the current page simply disappears from the list, and a client with many messages can dominate a page. Confirmed as a real, current limitation; Milestone 3's target.
+- GitHub context loading (`github_service.py` + `cache_service.py`) is real (live PyGithub calls, 1-hour TTL cache with Redis+in-memory fallback, circuit breaker) — no fabrication found. Feeds into AI context (`messaging_core.py`) correctly.
+- `ai_service.py`'s provider fallback chain (Claude → OpenAI → Gemini) and `ai_agent.py`'s ReAct tool-calling loop are both real, already covered by `test_ai_agent.py`/`test_ai_integration.py`/`test_ai_providers.py` at a mocked level.
+
+### 9.5 New finding — test coverage gap
+Full `tests/` directory confirmed via `ls`: `test_ai_chat.py`/`test_ai_agent.py`/`test_ai_integration.py`/`test_ai_providers.py` cover the **admin** agent chat path (`POST /api/v1/ai/chat`, `VoxlyAgent`, provider layer) at a mocked level. **Zero test coverage exists** for `messaging_core.py`, `chat.py`'s `/history/{client_id}`/`/messages`/`/ws` endpoints, `whatsapp.py`, or `telegram.py` — the entire client-facing conversation runtime pipeline that this phase is about to modify. No test file for any of these exists today.
+
+### 9.6 `useWebSocket.ts` — pre-existing frontend bug, noted not fixed
+Already surfaced in the Phase 2 Milestone 1 lint baseline: `connect` is referenced inside its own `useCallback` body (via the reconnect `setTimeout(connect, delay)` in `onclose`) before the `const connect = useCallback(...)` assignment completes, flagged by `react-hooks/immutability` as an **error** (not just a warning). Pre-existing, unrelated to any change made so far. Directly relevant to Milestone 4 (Realtime/reconnect behavior) — flagging now so it's a deliberate decision at that point whether fixing it counts as "absolutely required by an API contract" (reconnect correctness arguably is, once the backend side of realtime is fixed) rather than out-of-scope frontend modification.
+
+### 9.7 Net effect on the roadmap
+None of this changes Milestone order or scope — if anything it confirms Milestones 1-4 are targeting real, verified problems rather than assumed ones. It does mean Milestone 1 (Conversation State) and Milestone 4 (Realtime) are more tightly coupled than the roadmap text alone suggests: a backend-computed conversation state is most useful to broadcast in real-time, and fixing the broadcast requires fixing both the event type and the payload shape (§9.2) plus firing a second broadcast after the AI reply is saved, not just the incoming message. Flagging this coupling now; Milestone 1 will implement the state model and storage, Milestone 4 will fix the broadcast wiring — sequenced as instructed, not collapsed into one milestone.
