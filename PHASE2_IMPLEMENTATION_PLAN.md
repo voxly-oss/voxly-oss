@@ -1,6 +1,6 @@
 # Phase 2 Implementation Plan — Clients, Projects, Milestones, Channels
 
-**Status:** Planning only. No code has been modified for this phase.
+**Status:** All 4 milestones implemented, tested, and committed as of 2026-07-25 (`14087e3`, `42f6e16`, `b86fb76`, `ef6b0fb`). **Not yet deployed** — Milestones 2-4 deploy together once Phase 2 is fully approved, per explicit instruction; the Milestone 3 migration has not been applied to production yet either.
 **Source of truth this plan builds on:** `BACKEND_IMPLEMENTATION_PLAN.md` (§4, §6), re-verified directly against current code on 2026-07-25 (see file/line references throughout).
 **Stack note:** this is a SQLAlchemy + Alembic backend, not Prisma — migrations below are Alembic revisions, not Prisma schema changes.
 **Implementation order:** Clients → Projects → Milestones → Channels, per your instruction. This order is also the correct dependency order: Channels reads from Clients (and, for volume/activity, from `chat_history` which is keyed off `client_id`); Milestones reads from Projects; Projects reads from Clients.
