@@ -8,13 +8,17 @@ from app.models.client import Client
 from app.models.project import Project
 from app.models.milestone import Milestone
 from app.models.chat_history import ChatHistory
+from app.models.conversation_state import ConversationState
+from app.schemas.conversation import ConversationStateResponse, ConversationStateUpdate
 from app.services.ai_service import generate_client_response
 from app.services.cache_service import get_github_stats_cached
+from app.services.messaging_core import upsert_conversation_state
 from app.websockets.manager import manager
 from app.rate_limit import limiter
 from app.config import settings
 from pydantic import BaseModel, ConfigDict
 from typing import Annotated
+from uuid import UUID
 import secrets
 import logging
 import json
@@ -80,7 +84,7 @@ async def websocket_endpoint(*,
     "/history/{client_id}",
     responses={404: {"description": "Client not found"}},
 )
-async def get_chat_history(*, 
+async def get_chat_history(*,
     client_id: str,
     limit: int = 50,
     db: Annotated[Session , Depends(get_db)],
@@ -190,3 +194,65 @@ async def get_all_messages(*,
             for m in messages
         ]
     }
+
+
+@router.get(
+    "/conversations/{client_id}/status",
+    response_model=ConversationStateResponse,
+    responses={404: {"description": "Client not found, or no conversation state yet"}},
+)
+async def get_conversation_state(*,
+    client_id: UUID,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    """Current backend-computed conversation state for a client.
+
+    404 both when the client doesn't exist/isn't yours, and when it exists
+    but has no state yet (no message has ever been processed for it) — there
+    is no real value to report in that case, so we don't fabricate one.
+    """
+    client = db.query(Client).filter(
+        Client.id == client_id, Client.user_id == current_user.id
+    ).first()
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    state = db.query(ConversationState).filter(ConversationState.client_id == client_id).first()
+    if not state:
+        raise HTTPException(status_code=404, detail="No conversation state yet for this client")
+
+    return state
+
+
+@router.patch(
+    "/conversations/{client_id}/status",
+    response_model=ConversationStateResponse,
+    responses={404: {"description": "Client not found"}},
+)
+async def update_conversation_state(*,
+    client_id: UUID,
+    body: ConversationStateUpdate,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    """Manually set a client's conversation state (e.g. mark resolved/escalated).
+
+    Pydantic's Literal type on ConversationStateUpdate.status already rejects
+    any value outside awaiting_human/ai_handling/resolved/escalated with a 422
+    before this handler runs.
+    """
+    client = db.query(Client).filter(
+        Client.id == client_id, Client.user_id == current_user.id
+    ).first()
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    state = upsert_conversation_state(
+        db, client.id, body.status, updated_by_user_id=current_user.id
+    )
+    logger.info(
+        "Conversation state manually set to %s for client=%s by user=%s",
+        body.status, client_id, current_user.id,
+    )
+    return state

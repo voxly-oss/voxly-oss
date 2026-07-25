@@ -21,6 +21,7 @@ from app.models.client import Client
 from app.models.project import Project
 from app.models.milestone import Milestone
 from app.models.chat_history import ChatHistory
+from app.models.conversation_state import ConversationState
 from app.services.ai_service import generate_client_response
 from app.services.cache_service import get_github_stats_cached
 from app.services.localization import detect_language, t
@@ -106,6 +107,47 @@ def _save_chat_history(
         db.commit()
     except Exception as exc:
         logger.error(f"Failed to save chat history: {exc}")
+
+
+def upsert_conversation_state(
+    db: Session,
+    client_id: uuid.UUID,
+    status: str,
+    updated_by_user_id: Optional[uuid.UUID] = None,
+) -> ConversationState:
+    """Create or update the conversation-state row for a client.
+
+    updated_by_user_id=None means this was set automatically by the AI
+    pipeline; a real user id means a human explicitly changed it (see
+    PATCH /api/v1/chat/conversations/{client_id}/status in chat.py).
+    """
+    state = db.query(ConversationState).filter(ConversationState.client_id == client_id).first()
+    if state:
+        state.status = status
+        state.updated_by_user_id = updated_by_user_id
+    else:
+        state = ConversationState(
+            client_id=client_id,
+            status=status,
+            updated_by_user_id=updated_by_user_id,
+        )
+        db.add(state)
+    db.commit()
+    db.refresh(state)
+    return state
+
+
+def _update_conversation_state_from_ai_result(db: Session, client: Client, ai_result: dict) -> None:
+    """Automatic transition after an AI turn — driven by the real ai_result["success"]
+    signal, not a fabricated heuristic. A failed AI turn (all providers exhausted, or
+    an error) genuinely means a human needs to look at it; a successful one means the
+    AI handled this turn. Any prior manual state (resolved/escalated) is intentionally
+    overwritten — new client activity means the conversation is active again."""
+    try:
+        status = "ai_handling" if ai_result.get("success") else "awaiting_human"
+        upsert_conversation_state(db, client.id, status, updated_by_user_id=None)
+    except Exception as exc:
+        logger.error(f"Failed to update conversation state: {exc}")
 
 
 async def _broadcast_incoming(client: Client, message: str, channel: str) -> None:
@@ -213,6 +255,7 @@ async def process_incoming_message(
             reply = t("ai_empty", detect_language(message))
 
         _save_chat_history(db, client, project, message, reply, ai_result, channel)
+        _update_conversation_state_from_ai_result(db, client, ai_result)
 
         elapsed_ms = int((time.monotonic() - start_ts) * 1000)
         logger.info(
