@@ -29,7 +29,11 @@ def get_user_project_ids(db: Session, user_id: UUID) -> List[UUID]:
 
 
 def _get_project_progress(db: Session, project_id: UUID) -> int:
-    all_milestones = db.query(Milestone).filter(Milestone.project_id == project_id).all()
+    all_milestones = (
+        db.query(Milestone)
+        .filter(Milestone.project_id == project_id, Milestone.deleted_at.is_(None))
+        .all()
+    )
     total = len(all_milestones)
     completed = sum(1 for milestone in all_milestones if milestone.status == "completed")
     return int((completed / total) * 100) if total > 0 else 0
@@ -70,8 +74,11 @@ async def list_milestones(*,
 ):
     """List all milestones for the current user's projects."""
     user_project_ids = get_user_project_ids(db, current_user.id)
-    
-    query = db.query(Milestone).filter(Milestone.project_id.in_(user_project_ids))
+
+    query = db.query(Milestone).filter(
+        Milestone.project_id.in_(user_project_ids),
+        Milestone.deleted_at.is_(None),
+    )
     
     # Filter by specific project if provided
     if project_id:
@@ -133,10 +140,14 @@ async def get_milestone(*,
 ):
     """Get a specific milestone by ID."""
     user_project_ids = get_user_project_ids(db, current_user.id)
-    
+
     milestone = (
         db.query(Milestone)
-        .filter(Milestone.id == milestone_id, Milestone.project_id.in_(user_project_ids))
+        .filter(
+            Milestone.id == milestone_id,
+            Milestone.project_id.in_(user_project_ids),
+            Milestone.deleted_at.is_(None),
+        )
         .first()
     )
     
@@ -159,10 +170,14 @@ async def update_milestone(*,
 ):
     """Update a milestone."""
     user_project_ids = get_user_project_ids(db, current_user.id)
-    
+
     milestone = (
         db.query(Milestone)
-        .filter(Milestone.id == milestone_id, Milestone.project_id.in_(user_project_ids))
+        .filter(
+            Milestone.id == milestone_id,
+            Milestone.project_id.in_(user_project_ids),
+            Milestone.deleted_at.is_(None),
+        )
         .first()
     )
     
@@ -208,23 +223,27 @@ async def delete_milestone(*,
     db: Annotated[Session , Depends(get_db)],
     current_user: Annotated[User , Depends(get_current_user)],
 ):
-    """Delete a milestone."""
+    """Delete a milestone (soft delete)."""
     user_project_ids = get_user_project_ids(db, current_user.id)
-    
+
     milestone = (
         db.query(Milestone)
-        .filter(Milestone.id == milestone_id, Milestone.project_id.in_(user_project_ids))
+        .filter(
+            Milestone.id == milestone_id,
+            Milestone.project_id.in_(user_project_ids),
+            Milestone.deleted_at.is_(None),
+        )
         .first()
     )
-    
+
     if not milestone:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=MILESTONE_NOT_FOUND
         )
-    
+
     try:
-        db.delete(milestone)
+        milestone.deleted_at = datetime.now(timezone.utc)
         db.commit()
     except Exception as e:
         db.rollback()
