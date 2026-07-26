@@ -20,7 +20,7 @@ from app.schemas.conversation import (
 )
 from app.services.ai_service import generate_client_response
 from app.services.cache_service import get_github_stats_cached
-from app.services.messaging_core import upsert_conversation_state
+from app.services.messaging_core import upsert_conversation_state, broadcast_state_changed
 from app.websockets.manager import manager
 from app.rate_limit import limiter
 from app.config import settings
@@ -28,6 +28,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, or_, and_
 from typing import Annotated, Optional
 from uuid import UUID
+import asyncio
 import secrets
 import logging
 import json
@@ -35,18 +36,33 @@ import json
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# Frontend sends a ping every 30s (useWebSocket.ts PING_INTERVAL_MS). 3x that
+# gives real network jitter margin while still detecting a truly dead
+# connection (no clean close, e.g. cable pulled) well within a few minutes,
+# rather than only discovering it whenever the next broadcast happens to fire.
+_WS_RECEIVE_TIMEOUT_SECONDS = 90
+
+
 @router.websocket("/ws")
-async def websocket_endpoint(*, 
+async def websocket_endpoint(*,
     websocket: WebSocket,
     token: str = Query(...),
 ):
     """
     WebSocket endpoint for real-time chat updates.
     Authenticated via query param `token`.
-    
+
     FIX: Do NOT use get_db as a dependency — it holds a DB session
     for the entire WebSocket lifetime, causing connection pool exhaustion.
     Instead, create a short-lived session only for auth, then release it.
+
+    Client -> server message types:
+      {"type": "ping"} -> server replies {"type": "pong"}
+      {"type": "subscribe", "conversation_ids": [...]} -> restrict this
+        connection to only receive broadcast events for those conversation_ids
+        (client_ids). Omit/empty to go back to receiving every event for the
+        tenant — the default, and the only behavior that existed before this
+        message type was added, so no existing frontend behavior changes.
     """
     # Short-lived DB session for authentication ONLY
     db = SessionLocal()
@@ -67,16 +83,42 @@ async def websocket_endpoint(*,
 
     try:
         while True:
-            data = await websocket.receive_text()
+            try:
+                data = await asyncio.wait_for(
+                    websocket.receive_text(), timeout=_WS_RECEIVE_TIMEOUT_SECONDS
+                )
+            except asyncio.TimeoutError:
+                logger.info(
+                    f"WebSocket for {user_email} silent for "
+                    f"{_WS_RECEIVE_TIMEOUT_SECONDS}s — treating as dead, closing"
+                )
+                manager.disconnect(websocket, user_id)
+                try:
+                    await websocket.close(code=status.WS_1000_NORMAL_CLOSURE)
+                except Exception:
+                    pass
+                return
+
             logger.debug(f"Received WS message from {user_email}: {data}")
 
-            # Handle ping/pong keepalive from frontend
             try:
                 parsed = json.loads(data)
-                if parsed.get("type") == "ping":
-                    await websocket.send_json({"type": "pong"})
             except (json.JSONDecodeError, TypeError):
-                pass
+                continue
+
+            msg_type = parsed.get("type")
+            if msg_type == "ping":
+                await websocket.send_json({"type": "pong"})
+            elif msg_type == "subscribe":
+                conversation_ids = parsed.get("conversation_ids")
+                manager.set_subscription(
+                    websocket,
+                    set(conversation_ids) if conversation_ids else None,
+                )
+                logger.info(
+                    f"WebSocket for {user_email} subscribed to "
+                    f"{len(conversation_ids) if conversation_ids else 'all'} conversation(s)"
+                )
 
     except WebSocketDisconnect:
         manager.disconnect(websocket, user_id)
@@ -410,6 +452,7 @@ async def update_conversation_state(*,
     state = upsert_conversation_state(
         db, client.id, body.status, updated_by_user_id=current_user.id
     )
+    await broadcast_state_changed(client, state)
     logger.info(
         "Conversation state manually set to %s for client=%s by user=%s",
         body.status, client_id, current_user.id,
