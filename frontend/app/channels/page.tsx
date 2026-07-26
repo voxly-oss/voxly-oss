@@ -10,6 +10,7 @@ import {
     RefreshCw, Radio,
 } from 'lucide-react';
 import { formatPhone } from '@/lib/utils';
+import { QUIET_AFTER_DAYS, daysSince, isQuietChannel, timeAgo } from '@/lib/channelActivity';
 import { Button } from '@/components/ui/button';
 import { Panel, PanelRow, PanelText } from '@/components/SidePanel';
 
@@ -29,23 +30,6 @@ const CHANNEL_LABEL: Record<string, string> = {
     whatsapp: 'WhatsApp',
     telegram: 'Telegram',
 };
-
-const QUIET_AFTER_DAYS = 7;
-
-function daysSince(iso: string | null): number | null {
-    if (!iso) return null;
-    return (Date.now() - new Date(iso).getTime()) / 86_400_000;
-}
-
-function timeAgo(iso: string | null) {
-    if (!iso) return 'never';
-    const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
-    if (mins < 1) return 'just now';
-    if (mins < 60) return `${mins}m ago`;
-    const h = Math.floor(mins / 60);
-    if (h < 24) return `${h}h ago`;
-    return `${Math.floor(h / 24)}d ago`;
-}
 
 const GRID_COLS = 'grid grid-cols-[2fr_1fr_1.2fr_0.9fr_1fr_28px]';
 
@@ -92,7 +76,6 @@ export default function ChannelsPage() {
             a.channel === 'telegram'
                 ? (client?.telegram_chat_id ? `chat ${client.telegram_chat_id}` : '—')
                 : (client?.phone ? formatPhone(client.phone) : '—');
-        const days = daysSince(a.last_activity);
         return {
             id: `${a.client_id}-${a.channel}`,
             clientId: a.client_id,
@@ -101,7 +84,7 @@ export default function ChannelsPage() {
             channel: a.channel,
             volumeToday: a.volume_today,
             lastActivity: a.last_activity,
-            isQuiet: days != null && days >= QUIET_AFTER_DAYS,
+            isQuiet: isQuietChannel(a),
         };
     }), [activity, clientsById]);
 
