@@ -199,6 +199,16 @@ export const chatAPI = {
         api.patch(`/api/v1/chat/conversations/${clientId}/status`, { status }),
 };
 
+// ─── Channels API ───
+// Read-only aggregate over chat_history. Returns one row per (client, channel)
+// that has at least one real message — so a client with a phone number but no
+// conversation yet correctly does not appear. Only "whatsapp" and "telegram"
+// are ever returned; email is a one-way notification channel with no persisted
+// conversation history to aggregate.
+export const channelsAPI = {
+    list: () => api.get('/api/v1/channels'),
+};
+
 // ─── Dashboard API ───
 export const dashboardAPI = {
     stats: () => api.get('/api/v1/dashboard/stats'),

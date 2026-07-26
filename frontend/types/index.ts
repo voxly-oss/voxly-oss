@@ -123,6 +123,15 @@ export interface ChatHistoryResponse {
     github_stats: GitHubStats | null;
 }
 
+/** GET /api/v1/channels — real per-client, per-channel activity aggregated
+ *  from chat_history. `channel` is only ever "whatsapp" or "telegram". */
+export interface ChannelActivity {
+    client_id: string;
+    channel: string;
+    volume_today: number;
+    last_activity: string | null;
+}
+
 /** GET / PATCH /api/v1/chat/conversations/{client_id}/status */
 export interface ConversationState {
     client_id: string;
