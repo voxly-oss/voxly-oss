@@ -1,4 +1,4 @@
-from typing import Annotated, List
+from typing import Annotated, List, Optional
 from uuid import UUID
 from datetime import datetime, timezone
 
@@ -11,7 +11,7 @@ from app.models.client import Client
 from app.models.project import Project
 from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectResponse
 from app.utils.auth import get_current_user
-from app.utils.tenant_context import TenantContext, get_tenant_context
+from app.utils.tenant_context import TenantContext, get_tenant_context, shadow_verify_read
 
 router = APIRouter()
 PROJECT_NOT_FOUND = "Project not found"
@@ -23,23 +23,37 @@ def get_user_client_ids(db: Session, user_id: UUID) -> List[UUID]:
     return [client.id for client in clients]
 
 
+def _make_org_scoped_project_count(client_id: Optional[UUID] = None):
+    """Returns an (db, org_id) -> int counter matching whatever client_id
+    filter, if any, the legacy query applied — an unfiltered org-wide count
+    would never agree with a client-filtered legacy count and would report
+    a false mismatch that has nothing to do with tenancy correctness."""
+    def _count(db: Session, org_id: UUID) -> int:
+        q = db.query(Project).filter(Project.org_id == org_id, Project.deleted_at.is_(None))
+        if client_id:
+            q = q.filter(Project.client_id == client_id)
+        return q.count()
+    return _count
+
+
 @router.get("", response_model=List[ProjectResponse])
-async def list_projects(*, 
+async def list_projects(*,
     client_id: UUID = None,
     skip: int = 0,
     limit: int = 100,
     db: Annotated[Session , Depends(get_db)],
     current_user: Annotated[User , Depends(get_current_user)],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
 ):
     """List all projects for the current user's clients."""
     user_client_ids = get_user_client_ids(db, current_user.id)
-    
+
     query = (
         db.query(Project)
         .options(selectinload(Project.github_cache))
         .filter(Project.client_id.in_(user_client_ids), Project.deleted_at.is_(None))
     )
-    
+
     # Filter by specific client if provided
     if client_id:
         if client_id not in user_client_ids:
@@ -48,7 +62,12 @@ async def list_projects(*,
                 detail="Access denied to this client"
             )
         query = query.filter(Project.client_id == client_id)
-    
+
+    legacy_total = query.count()
+    shadow_verify_read(
+        db, tenant, "projects", _make_org_scoped_project_count(client_id), legacy_total
+    )
+
     projects = query.offset(skip).limit(limit).all()
     return projects
 

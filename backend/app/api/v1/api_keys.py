@@ -28,7 +28,7 @@ from app.schemas.api_key import (
 )
 from app.utils.auth import get_current_user
 from app.utils.api_key_auth import generate_api_key
-from app.utils.tenant_context import TenantContext, get_tenant_context
+from app.utils.tenant_context import TenantContext, get_tenant_context, shadow_verify_read
 
 import logging
 
@@ -110,15 +110,23 @@ async def create_api_key(*,
 
 
 @router.get("/", response_model=APIKeyListResponse)
-async def list_api_keys(*, 
+async def list_api_keys(*,
     db: Annotated[Session , Depends(get_db)],
     current_user: Annotated[User , Depends(get_current_user)],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
 ):
     """List all API keys for the current user."""
+    legacy_total = db.query(APIKey).filter(APIKey.user_id == current_user.id).count()
+    shadow_verify_read(
+        db, tenant, "api_keys",
+        lambda db, org_id: db.query(APIKey).filter(APIKey.org_id == org_id).count(),
+        legacy_total,
+    )
+
     keys = db.query(APIKey).filter(
         APIKey.user_id == current_user.id
     ).order_by(APIKey.created_at.desc()).all()
-    
+
     max_keys = _get_max_api_keys(current_user, db)
     
     return APIKeyListResponse(
