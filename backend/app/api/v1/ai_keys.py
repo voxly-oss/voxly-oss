@@ -21,7 +21,7 @@ from app.database import get_db
 from app.models.user import User
 from app.models.user_ai_key import UserAIKey
 from app.api.v1.auth import get_current_user
-from app.utils.tenant_context import TenantContext, get_tenant_context
+from app.utils.tenant_context import TenantContext, get_tenant_context, shadow_verify_read
 
 logger = logging.getLogger(__name__)
 
@@ -201,11 +201,19 @@ async def list_providers(*,
 
 
 @router.get("/", response_model=List[AIKeyResponse])
-async def list_ai_keys(*, 
+async def list_ai_keys(*,
     current_user: Annotated[User , Depends(get_current_user)],
     db: Annotated[Session , Depends(get_db)],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
 ):
     """List all user AI keys (masked)."""
+    legacy_total = db.query(UserAIKey).filter(UserAIKey.user_id == current_user.id).count()
+    shadow_verify_read(
+        db, tenant, "user_ai_keys",
+        lambda db, org_id: db.query(UserAIKey).filter(UserAIKey.org_id == org_id).count(),
+        legacy_total,
+    )
+
     keys = db.query(UserAIKey).filter(
         UserAIKey.user_id == current_user.id,
     ).order_by(UserAIKey.created_at.desc()).all()

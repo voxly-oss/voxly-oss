@@ -10,27 +10,36 @@ from app.models.user import User
 from app.models.client import Client
 from app.schemas.client import ClientCreate, ClientUpdate, ClientResponse
 from app.utils.auth import get_current_user
-from app.utils.tenant_context import TenantContext, get_tenant_context
+from app.utils.tenant_context import TenantContext, get_tenant_context, shadow_verify_read
 
 router = APIRouter()
 CLIENT_NOT_FOUND = "Client not found"
 
 
+def _org_scoped_client_count(db: Session, org_id: UUID) -> int:
+    return (
+        db.query(Client)
+        .filter(Client.org_id == org_id, Client.deleted_at.is_(None))
+        .count()
+    )
+
+
 @router.get("", response_model=List[ClientResponse])
-async def list_clients(*, 
+async def list_clients(*,
     skip: int = 0,
     limit: int = 100,
     db: Annotated[Session , Depends(get_db)],
     current_user: Annotated[User , Depends(get_current_user)],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
 ):
     """List all clients for the current user."""
-    clients = (
-        db.query(Client)
-        .filter(Client.user_id == current_user.id, Client.deleted_at.is_(None))
-        .offset(skip)
-        .limit(limit)
-        .all()
+    base_query = db.query(Client).filter(
+        Client.user_id == current_user.id, Client.deleted_at.is_(None)
     )
+    legacy_total = base_query.count()
+    shadow_verify_read(db, tenant, "clients", _org_scoped_client_count, legacy_total)
+
+    clients = base_query.offset(skip).limit(limit).all()
     return clients
 
 

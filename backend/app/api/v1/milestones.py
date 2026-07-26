@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import Annotated, List
+from typing import Annotated, List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
@@ -12,6 +12,7 @@ from app.models.project import Project
 from app.models.milestone import Milestone
 from app.schemas.milestone import MilestoneCreate, MilestoneUpdate, MilestoneResponse
 from app.utils.auth import get_current_user
+from app.utils.tenant_context import TenantContext, get_tenant_context, shadow_verify_read
 
 router = APIRouter()
 MILESTONE_NOT_FOUND = "Milestone not found"
@@ -64,13 +65,31 @@ def _queue_milestone_completed_notification(
     )
 
 
+def _make_org_scoped_milestone_count(project_id: Optional[UUID] = None):
+    """Milestones carry no org_id column (transitive scoping via Project --
+    see ORGANIZATION_FIRST_ARCHITECTURE.md §14). Org-scoping here means
+    joining through Project, matching however the legacy query was filtered
+    by project_id, if at all."""
+    def _count(db: Session, org_id: UUID) -> int:
+        q = (
+            db.query(Milestone)
+            .join(Project, Project.id == Milestone.project_id)
+            .filter(Project.org_id == org_id, Milestone.deleted_at.is_(None))
+        )
+        if project_id:
+            q = q.filter(Milestone.project_id == project_id)
+        return q.count()
+    return _count
+
+
 @router.get("", response_model=List[MilestoneResponse])
-async def list_milestones(*, 
+async def list_milestones(*,
     project_id: UUID = None,
     skip: int = 0,
     limit: int = 100,
     db: Annotated[Session , Depends(get_db)],
     current_user: Annotated[User , Depends(get_current_user)],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
 ):
     """List all milestones for the current user's projects."""
     user_project_ids = get_user_project_ids(db, current_user.id)
@@ -79,7 +98,7 @@ async def list_milestones(*,
         Milestone.project_id.in_(user_project_ids),
         Milestone.deleted_at.is_(None),
     )
-    
+
     # Filter by specific project if provided
     if project_id:
         if project_id not in user_project_ids:
@@ -88,7 +107,12 @@ async def list_milestones(*,
                 detail="Access denied to this project"
             )
         query = query.filter(Milestone.project_id == project_id)
-    
+
+    legacy_total = query.count()
+    shadow_verify_read(
+        db, tenant, "milestones", _make_org_scoped_milestone_count(project_id), legacy_total
+    )
+
     milestones = query.order_by(Milestone.due_date).offset(skip).limit(limit).all()
     return milestones
 
