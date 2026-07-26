@@ -86,7 +86,7 @@ export function AIEngineVisual() {
                         <span className="text-[10px] text-white/50">Client Update</span>
                     </div>
                     <p className="text-[10px] text-white/70 leading-relaxed">
-                        "We've refactored the user API for better security. Token validation is now built-in."
+                        &quot;We&apos;ve refactored the user API for better security. Token validation is now built-in.&quot;
                     </p>
                 </motion.div>
             </div>

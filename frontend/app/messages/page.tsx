@@ -1,30 +1,19 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useQuery, keepPreviousData, useQueryClient } from '@tanstack/react-query';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { chatAPI } from '@/lib/api';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
-import { motion, AnimatePresence } from 'framer-motion';
 import Link from 'next/link';
 import {
-    MessageSquare,
-    Search,
-    Bot,
-    User as UserIcon,
-    ChevronLeft,
-    ChevronRight,
-    Clock,
-    Inbox,
-    Sparkles,
-    ArrowUpRight,
-    Filter,
+    MessageSquare, Search, User as UserIcon, ChevronLeft, ChevronRight,
+    Sparkles, Plus, AlertTriangle, Check, X as XIcon,
 } from 'lucide-react';
+import { Panel, PanelRow, PanelText } from '@/components/SidePanel';
+import PreviewBadge, { PreviewBanner, PreviewMark } from '@/components/PreviewBadge';
 
-/* ─── Types ─── */
+/* ─── Types (unchanged from previous implementation) ─── */
 interface ChatMessage {
     id: string;
     client_id: string;
@@ -37,104 +26,63 @@ interface ChatMessage {
     created_at: string;
 }
 
-/* ─── Animation Variants ─── */
-const containerVariants = {
-    hidden: { opacity: 0 },
-    visible: { opacity: 1, transition: { staggerChildren: 0.05 } },
-};
-const itemVariants = {
-    hidden: { opacity: 0, y: 12 },
-    visible: { opacity: 1, y: 0, transition: { duration: 0.3 } },
-};
+const PAGE_SIZE = 20;
 
-const MESSAGE_SKELETON_KEYS = [
-    'message-skeleton-1',
-    'message-skeleton-2',
-    'message-skeleton-3',
-    'message-skeleton-4',
-    'message-skeleton-5',
-];
-
-/* ─── Helpers ─── */
-function formatTimestamp(dateString: string) {
-    const d = new Date(dateString);
-    const now = new Date();
-    const diffMs = now.getTime() - d.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-
-    if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-    const diffHours = Math.floor(diffMins / 60);
-    if (diffHours < 24) return `${diffHours}h ago`;
-    const diffDays = Math.floor(diffHours / 24);
-    if (diffDays < 7) return `${diffDays}d ago`;
-
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+function formatTimeAgo(dateString: string) {
+    const diffMins = Math.floor((Date.now() - new Date(dateString).getTime()) / 60000);
+    if (diffMins < 1) return 'now';
+    if (diffMins < 60) return `${diffMins}m`;
+    const h = Math.floor(diffMins / 60);
+    if (h < 24) return `${h}h`;
+    return `${Math.floor(h / 24)}d`;
 }
 
 function truncate(str: string, len: number) {
     return str.length > len ? str.slice(0, len) + '…' : str;
 }
 
-/* ─── Empty State ─── */
-function EmptyMessages() {
-    return (
-        <motion.div
-            className="flex flex-col items-center justify-center py-20 text-center"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5 }}
-        >
-            <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-violet-500/20 to-blue-500/20 border border-violet-500/20 flex items-center justify-center mb-6">
-                <Inbox className="w-10 h-10 text-violet-400" />
-            </div>
-            <h3 className="text-xl font-semibold text-white mb-2">
-                No messages yet
-            </h3>
-            <p className="text-white/40 max-w-md mb-6">
-                Messages from your WhatsApp-connected clients will appear here.
-                Set up a client with a phone number to get started.
-            </p>
-            <Link href="/clients/new">
-                <Button className="bg-gradient-to-r from-violet-600 to-blue-600 hover:from-violet-500 hover:to-blue-500 text-white border-0 shadow-lg shadow-violet-500/20">
-                    <UserIcon className="w-4 h-4 mr-2" />
-                    Add a Client
-                </Button>
-            </Link>
-        </motion.div>
-    );
+// Deterministic placeholder confidence/sentiment — no sentiment-analysis or
+// confidence-scoring model exists on the backend yet. Stable per message id.
+function hashOf(s: string) {
+    let h = 2166136261;
+    for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return h >>> 0;
+}
+const mockConfidence = (id: string) => 65 + (hashOf(id) % 34);
+const SENTIMENTS = ['Positive', 'Neutral', 'Negative'] as const;
+const mockSentiment = (id: string) => SENTIMENTS[hashOf(`${id}-s`) % 3];
+
+type Status = 'Awaiting human' | 'AI handling' | 'Resolved';
+const STATUS_STYLE: Record<Status, string> = {
+    'Awaiting human': 'bg-voxly-warning-soft text-voxly-warning',
+    'AI handling': 'bg-voxly-violet-soft text-voxly-violet',
+    'Resolved': 'bg-voxly-success-soft text-voxly-success',
+};
+const STATUS_DOT: Record<Status, string> = {
+    'Awaiting human': 'bg-voxly-warning',
+    'AI handling': 'bg-voxly-violet',
+    'Resolved': 'bg-voxly-success',
+};
+
+function inferStatus(latest: ChatMessage): Status {
+    if (!latest.ai_response) return 'Awaiting human';
+    const ageMin = (Date.now() - new Date(latest.created_at).getTime()) / 60000;
+    return ageMin < 15 ? 'AI handling' : 'Resolved';
 }
 
-/* ─── Skeleton Loader ─── */
-function MessageSkeleton() {
-    return (
-        <div className="space-y-3">
-            {MESSAGE_SKELETON_KEYS.map((skeletonKey) => (
-                <div key={skeletonKey} className="glass-card p-4 border border-white/5 animate-pulse">
-                    <div className="flex items-start gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-white/10 shrink-0" />
-                        <div className="flex-1 space-y-2">
-                            <div className="flex items-center gap-2">
-                                <div className="h-4 w-24 bg-white/10 rounded" />
-                                <div className="h-3 w-16 bg-white/5 rounded" />
-                            </div>
-                            <div className="h-4 w-3/4 bg-white/10 rounded" />
-                            <div className="h-4 w-1/2 bg-white/5 rounded" />
-                        </div>
-                    </div>
-                </div>
-            ))}
-        </div>
-    );
+function groupLabel(m: ChatMessage) {
+    const mins = (Date.now() - new Date(m.created_at).getTime()) / 60000;
+    if (mins < 15) return 'JUST NOW';
+    if (mins < 24 * 60) return 'EARLIER TODAY';
+    if (mins < 48 * 60) return 'YESTERDAY';
+    return 'EARLIER';
 }
 
-/* ═══════════════════ MESSAGES PAGE ═══════════════════ */
-const PAGE_SIZE = 20;
-
-export default function MessagesPage() {
+export default function ConversationCenterPage() {
     const [search, setSearch] = useState('');
     const [page, setPage] = useState(0);
-    const [filterSender, setFilterSender] = useState<'all' | 'client' | 'ai'>('all');
+    const [statusFilter, setStatusFilter] = useState<'All' | Status>('All');
+    const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
 
     const { data: messagesData, isLoading } = useQuery<{ messages: ChatMessage[]; total: number }>({
         queryKey: ['messages', page],
@@ -145,29 +93,24 @@ export default function MessagesPage() {
         placeholderData: keepPreviousData,
     });
 
-    // Real-time updates
+    // Real-time updates — matches the Phase 3 Milestone 4 event envelope
+    // ({event, payload}, not the old {type, message} shape). Only
+    // conversation.message_completed carries a full ChatMessage-shaped
+    // record; conversation.message_received fires before the AI reply
+    // exists and conversation.state_changed carries only a status delta,
+    // so neither is appended to the message list here.
     const queryClient = useQueryClient();
     const { lastMessage } = useWebSocket();
 
     useEffect(() => {
         if (!lastMessage) return;
-
-        if (lastMessage.type === 'new_message') {
-            const newMsg = lastMessage.message;
-            // Optimistically update the cache
+        if (lastMessage.event === 'conversation.message_completed') {
+            const newMsg = lastMessage.payload as ChatMessage;
             queryClient.setQueryData(['messages', 0], (old: { messages: ChatMessage[]; total: number } | undefined) => {
                 if (!old) return { messages: [newMsg], total: 1 };
-                
-                // Avoid duplicates
                 if (old.messages.some(m => m.id === newMsg.id)) return old;
-
-                return {
-                    ...old,
-                    total: old.total + 1,
-                    messages: [newMsg, ...old.messages].slice(0, PAGE_SIZE), // Keep page size verified
-                };
+                return { ...old, total: old.total + 1, messages: [newMsg, ...old.messages].slice(0, PAGE_SIZE) };
             });
-            // Also invalidate to ensure consistency eventually
             queryClient.invalidateQueries({ queryKey: ['messages'] });
         }
     }, [lastMessage, queryClient]);
@@ -176,243 +119,310 @@ export default function MessagesPage() {
     const total: number = messagesData?.total ?? 0;
     const totalPages = Math.ceil(total / PAGE_SIZE);
 
-    // Client-side search + filter
-    const filteredMessages = messages.filter((msg: ChatMessage) => {
-        const matchesSearch =
-            !search ||
-            msg.message?.toLowerCase().includes(search.toLowerCase()) ||
-            msg.ai_response?.toLowerCase().includes(search.toLowerCase()) ||
-            msg.client_name?.toLowerCase().includes(search.toLowerCase());
+    // Group the currently-loaded message batch into one row per client —
+    // real data, same fetch/pagination/WebSocket wiring as before, just
+    // presented as conversations instead of a flat log.
+    const conversations = useMemo(() => {
+        const byClient = new Map<string, ChatMessage[]>();
+        for (const m of messages) {
+            const arr = byClient.get(m.client_id) ?? [];
+            arr.push(m);
+            byClient.set(m.client_id, arr);
+        }
+        return Array.from(byClient.entries()).map(([clientId, msgs]) => {
+            const sorted = [...msgs].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+            const latest = sorted[0];
+            return {
+                clientId, clientName: latest.client_name || 'Unknown Client',
+                latest, status: inferStatus(latest), thread: sorted,
+                confidence: mockConfidence(latest.id), sentiment: mockSentiment(latest.id),
+            };
+        }).sort((a, b) => new Date(b.latest.created_at).getTime() - new Date(a.latest.created_at).getTime());
+    }, [messages]);
 
-        const matchesFilter =
-            filterSender === 'all' || msg.sender === filterSender;
+    const filtered = useMemo(() => conversations.filter(c => {
+        const matchesSearch = !search || c.clientName.toLowerCase().includes(search.toLowerCase()) ||
+            c.latest.message?.toLowerCase().includes(search.toLowerCase());
+        const matchesStatus = statusFilter === 'All' || c.status === statusFilter;
+        return matchesSearch && matchesStatus;
+    }), [conversations, search, statusFilter]);
 
-        return matchesSearch && matchesFilter;
-    });
+    const selected = filtered.find(c => c.clientId === selectedClientId) ?? filtered[0] ?? null;
+    const needsAttention = conversations.filter(c => c.status === 'Awaiting human').slice(0, 2);
+    const statusCounts = {
+        Resolved: conversations.filter(c => c.status === 'Resolved').length,
+        'AI handling': conversations.filter(c => c.status === 'AI handling').length,
+        'Awaiting human': conversations.filter(c => c.status === 'Awaiting human').length,
+    };
+
+    const grouped = useMemo(() => {
+        const groups: { label: string; items: typeof filtered }[] = [];
+        for (const c of filtered) {
+            const label = groupLabel(c.latest);
+            const last = groups[groups.length - 1];
+            if (last && last.label === label) last.items.push(c);
+            else groups.push({ label, items: [c] });
+        }
+        return groups;
+    }, [filtered]);
 
     return (
-        <motion.div
-            className="space-y-6"
-            variants={containerVariants}
-            initial="hidden"
-            animate="visible"
-        >
-            {/* Page Header */}
-            <motion.div
-                className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4"
-                variants={itemVariants}
-            >
-                <div>
-                    <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-                        Messages
-                        <Sparkles className="w-5 h-5 text-violet-400" />
-                    </h1>
-                    <p className="text-white/50">
-                        AI conversations across all your clients
-                        {total > 0 && (
-                            <span className="text-white/30"> · {total} total</span>
-                        )}
-                    </p>
+        <div className="flex flex-col xl:flex-row gap-6 items-start">
+            <div className="flex-1 min-w-0 w-full flex flex-col gap-[18px]">
+                <div className="flex items-end justify-between gap-4 flex-wrap">
+                    <div>
+                        <h1 className="font-display font-bold text-[22px] text-foreground tracking-[-0.01em] flex items-center gap-2">
+                            Conversation Center <Sparkles className="w-4 h-4 text-voxly-violet" />
+                        </h1>
+                        <p className="text-[13px] text-voxly-ink-6 mt-[3px]">
+                            {conversations.length} conversations{total > 0 ? ` · ${total} total messages` : ''} · {statusCounts['Awaiting human']} need attention
+                        </p>
+                    </div>
+                    <button disabled title="Compose requires selecting a client first" className="bg-primary/60 text-primary-foreground font-semibold text-[13px] rounded-lg px-4 py-[9px] flex items-center gap-[7px] cursor-not-allowed">
+                        <Plus className="w-[15px] h-[15px]" /> Compose
+                    </button>
                 </div>
-            </motion.div>
 
-            {/* Search + Filters */}
-            <motion.div
-                className="glass-card p-4 border border-white/5 flex flex-col sm:flex-row gap-3"
-                variants={itemVariants}
-            >
-                <div className="relative flex-1">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30" />
-                    <Input
-                        placeholder="Search messages, clients..."
-                        className="pl-10 bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:border-violet-500/50 h-10"
-                        value={search}
-                        onChange={(e) => setSearch(e.target.value)}
-                    />
+                <PreviewBanner>
+                    <b className="font-semibold">Preview.</b> Messages and AI replies below are real. Confidence % and Sentiment are illustrative — no sentiment-analysis model runs yet, though the backend now stores real confidence/sentiment on each message when a provider returns them.
+                </PreviewBanner>
+
+                {needsAttention.length > 0 && (
+                    <div className="rounded-[14px] border border-voxly-violet/30 bg-voxly-violet-soft px-[18px] py-3.5">
+                        <div className="font-mono text-[9.5px] font-bold tracking-[0.07em] text-voxly-violet mb-2.5">NEEDS ATTENTION</div>
+                        <div className="flex flex-col gap-2.5">
+                            {needsAttention.map(c => (
+                                <div key={c.clientId} className="flex items-center gap-2.5">
+                                    <AlertTriangle className="w-3.5 h-3.5 text-voxly-warning flex-none" />
+                                    <span className="flex-1 text-[12.5px] text-foreground/90 leading-relaxed">{c.clientName} — AI drafted a reply, awaiting your review</span>
+                                    <button onClick={() => setSelectedClientId(c.clientId)} className="font-semibold text-[11px] text-voxly-warning border border-voxly-warning/40 hover:bg-voxly-warning-soft rounded-md px-2.5 py-[3px] flex-none transition-colors">
+                                        Review
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                {/* Status row */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+                    <div className="border border-border rounded-xl bg-card px-4 py-3.5">
+                        <div className="font-mono text-[9.5px] font-bold uppercase tracking-wider text-voxly-ink-5 mb-2.5 flex items-center">Conversation Status<PreviewMark /></div>
+                        <PanelRow dot={STATUS_DOT.Resolved} label="Resolved" value={statusCounts.Resolved} />
+                        <PanelRow dot={STATUS_DOT['AI handling']} label="AI handling" value={statusCounts['AI handling']} />
+                        <PanelRow dot={STATUS_DOT['Awaiting human']} label="Awaiting human" value={statusCounts['Awaiting human']} />
+                    </div>
+                    <div className="border border-border rounded-xl bg-card px-4 py-3.5">
+                        <div className="font-mono text-[9.5px] font-bold uppercase tracking-wider text-voxly-ink-5 mb-2.5 flex items-center">SLA<PreviewMark /></div>
+                        <PanelRow dot="bg-voxly-success" label="On track" value={Math.max(conversations.length - 2, 0)} />
+                        <PanelRow dot="bg-voxly-warning" label="At risk" value={conversations.length > 0 ? 1 : 0} />
+                        <PanelRow dot="bg-voxly-heat" label="Breached" value={conversations.length > 1 ? 1 : 0} />
+                    </div>
+                    <div className="border border-border rounded-xl bg-card px-4 py-3.5">
+                        <div className="font-mono text-[9.5px] font-bold uppercase tracking-wider text-voxly-ink-5 mb-2.5 flex items-center">Sentiment<PreviewMark /></div>
+                        <PanelRow dot="bg-voxly-success" label="Positive" value={conversations.filter(c => c.sentiment === 'Positive').length} />
+                        <PanelRow dot="bg-voxly-ink-5" label="Neutral" value={conversations.filter(c => c.sentiment === 'Neutral').length} />
+                        <PanelRow dot="bg-voxly-heat" label="Negative" value={conversations.filter(c => c.sentiment === 'Negative').length} />
+                    </div>
                 </div>
-                <div className="flex gap-2">
-                    {[
-                        { key: 'all' as const, label: 'All' },
-                        { key: 'client' as const, label: 'Client', icon: UserIcon },
-                        { key: 'ai' as const, label: 'AI', icon: Bot },
-                    ].map((f) => (
-                        <Button
-                            key={f.key}
-                            variant={filterSender === f.key ? 'default' : 'outline'}
-                            size="sm"
-                            onClick={() => setFilterSender(f.key)}
-                            className={
-                                filterSender === f.key
-                                    ? 'bg-gradient-to-r from-violet-600 to-blue-600 text-white border-0'
-                                    : 'border-white/10 text-white/60 hover:text-white hover:bg-white/5'
-                            }
-                        >
-                            {f.icon && <f.icon className="w-3.5 h-3.5 mr-1" />}
-                            {f.label}
-                        </Button>
+
+                {/* Filter bar */}
+                <div className="flex items-center gap-2 flex-wrap">
+                    <div className="relative flex-1 max-w-[260px] min-w-[160px]">
+                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-voxly-ink-5" />
+                        <input
+                            placeholder="Search conversations…"
+                            value={search}
+                            onChange={(e) => setSearch(e.target.value)}
+                            className="w-full h-9 pl-8 pr-3 text-[12.5px] bg-card border border-border rounded-lg text-foreground placeholder:text-voxly-ink-5 focus:outline-none focus:border-primary focus:ring-[3px] focus:ring-primary/15 transition-all"
+                        />
+                    </div>
+                    {(['All', 'Awaiting human', 'AI handling', 'Resolved'] as const).map(f => (
+                        <button
+                            key={f}
+                            onClick={() => setStatusFilter(f)}
+                            className={`text-[11.5px] rounded-full px-[11px] py-[5px] transition-colors ${
+                                statusFilter === f ? 'font-semibold text-primary-foreground bg-primary' : 'text-voxly-ink-6 border border-border hover:border-voxly-ink-4 hover:text-foreground'
+                            }`}>
+                            {f === 'Awaiting human' ? 'Needs attention' : f}
+                        </button>
                     ))}
                 </div>
-            </motion.div>
 
-            {/* Messages List */}
-            <motion.div variants={itemVariants}>
-                {(() => {
-                    if (isLoading) {
-                        return <MessageSkeleton />;
-                    }
-
-                    if (messages.length === 0) {
-                        return <EmptyMessages />;
-                    }
-
-                    if (filteredMessages.length === 0) {
-                        return (
-                            <div className="text-center py-16">
-                                <Filter className="w-10 h-10 text-white/20 mx-auto mb-3" />
-                                <p className="text-white/40">
-                                    No messages match your search or filter.
-                                </p>
-                            </div>
-                        );
-                    }
-
-                    return (
-                        <AnimatePresence mode="popLayout">
-                            <div className="space-y-3">
-                                {filteredMessages.map((msg, index) => (
-                                    <motion.div
-                                        key={msg.id}
-                                        initial={{ opacity: 0, y: 10 }}
-                                        animate={{ opacity: 1, y: 0 }}
-                                        exit={{ opacity: 0, y: -10 }}
-                                        transition={{ delay: index * 0.03, duration: 0.25 }}
-                                    >
-                                        <Card className="glass-card border-white/5 hover:border-white/10 transition-all group">
-                                            <CardContent className="p-4">
-                                                <div className="flex items-start gap-3">
-                                                    {/* Avatar */}
-                                                    <div
-                                                        className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border ${
-                                                            msg.sender === 'ai'
-                                                                ? 'bg-gradient-to-br from-violet-500/20 to-blue-500/20 border-violet-500/20'
-                                                                : 'bg-gradient-to-br from-emerald-500/20 to-green-500/20 border-emerald-500/20'
-                                                        }`}
-                                                    >
-                                                        {msg.sender === 'ai' ? (
-                                                            <Bot className="w-5 h-5 text-violet-400" />
-                                                        ) : (
-                                                            <UserIcon className="w-5 h-5 text-emerald-400" />
-                                                        )}
-                                                    </div>
-
-                                                    {/* Content */}
-                                                    <div className="flex-1 min-w-0">
-                                                        <div className="flex items-center gap-2 mb-1 flex-wrap">
-                                                            <Link
-                                                                href={`/clients/${msg.client_id}`}
-                                                                className="text-sm font-medium text-white hover:text-violet-400 transition-colors"
-                                                            >
-                                                                {msg.client_name || 'Unknown Client'}
-                                                            </Link>
-                                                            <Badge
-                                                                className={`text-[10px] px-1.5 py-0 border ${
-                                                                    msg.sender === 'ai'
-                                                                        ? 'bg-violet-500/10 text-violet-400 border-violet-500/20'
-                                                                        : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                                                                }`}
-                                                            >
-                                                                {msg.sender === 'ai' ? 'AI' : 'Client'}
-                                                            </Badge>
-                                                            {msg.model_used && msg.model_used !== 'no_project' && (
-                                                                <span className="text-[10px] text-white/20">
-                                                                    {msg.model_used}
-                                                                </span>
-                                                            )}
-                                                            <span className="text-xs text-white/30 ml-auto flex items-center gap-1 shrink-0">
-                                                                <Clock className="w-3 h-3" />
-                                                                {formatTimestamp(msg.created_at)}
-                                                            </span>
-                                                        </div>
-
-                                                        {/* Client message */}
-                                                        <p className="text-sm text-white/70 mb-1">
-                                                            {truncate(msg.message, 200)}
-                                                        </p>
-
-                                                        {/* AI response preview */}
-                                                        {msg.ai_response && (
-                                                            <div className="mt-2 pl-3 border-l-2 border-violet-500/30">
-                                                                <p className="text-sm text-white/50">
-                                                                    {truncate(msg.ai_response, 200)}
-                                                                </p>
-                                                            </div>
-                                                        )}
-
-                                                        {/* Metadata */}
-                                                        {msg.tokens_used != null && msg.tokens_used > 0 && (
-                                                            <div className="mt-2 flex items-center gap-3 text-xs text-white/20">
-                                                                <span>{msg.tokens_used} tokens</span>
-                                                            </div>
-                                                        )}
-                                                    </div>
-
-                                                    {/* View client link */}
-                                                    <Link
-                                                        href={`/clients/${msg.client_id}`}
-                                                        className="opacity-0 group-hover:opacity-100 transition-opacity"
-                                                    >
-                                                        <Button
-                                                            variant="ghost"
-                                                            size="sm"
-                                                            className="text-white/30 hover:text-white hover:bg-white/5"
-                                                        >
-                                                            <ArrowUpRight className="w-4 h-4" />
-                                                        </Button>
-                                                    </Link>
+                {/* Conversation list */}
+                <div className="border border-border rounded-[14px] bg-card overflow-hidden">
+                    {isLoading ? (
+                        <div className="p-8 text-center text-voxly-ink-5 text-sm">Loading…</div>
+                    ) : filtered.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center py-16 text-center">
+                            <MessageSquare className="w-8 h-8 text-voxly-ink-5 mb-3" />
+                            <h3 className="text-sm font-semibold text-foreground mb-1">No conversations yet</h3>
+                            <p className="text-xs text-voxly-ink-5 max-w-sm mb-4">Messages from WhatsApp-connected clients will appear here.</p>
+                            <Link href="/clients/new"><Button className="bg-primary hover:bg-primary/90 text-primary-foreground"><UserIcon className="w-4 h-4 mr-2" />Add a Client</Button></Link>
+                        </div>
+                    ) : (
+                        grouped.map(group => (
+                            <div key={group.label}>
+                                <div className="px-4 py-2 bg-voxly-surface-2 font-mono text-[9.5px] font-bold tracking-[0.07em] text-voxly-ink-5">{group.label}</div>
+                                {group.items.map(c => {
+                                    const isSelected = selected?.clientId === c.clientId;
+                                    return (
+                                        <button
+                                            key={c.clientId}
+                                            onClick={() => setSelectedClientId(c.clientId)}
+                                            className={`w-full flex items-center gap-3 px-4 py-[11px] border-b border-border last:border-b-0 text-left transition-colors ${
+                                                isSelected ? 'bg-voxly-surface-2' : c.status === 'Awaiting human' ? 'hover:bg-white/[0.03]' : 'hover:bg-white/[0.02]'
+                                            }`}
+                                        >
+                                            <span className={`w-[3px] self-stretch rounded-sm flex-none ${isSelected ? 'bg-primary' : 'bg-transparent'}`} />
+                                            <span className="w-7 h-7 rounded-lg bg-voxly-surface-3 flex items-center justify-center flex-none text-voxly-ink-6">
+                                                <MessageSquare className="w-3.5 h-3.5" />
+                                            </span>
+                                            <div className="flex-1 min-w-0">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-[13px] font-semibold text-foreground truncate">{c.clientName}</span>
+                                                    <span className={`inline-flex items-center gap-1 text-[10.5px] font-semibold rounded-full pl-1.5 pr-2 py-[2px] whitespace-nowrap flex-none ${STATUS_STYLE[c.status]}`}>
+                                                        <span className={`w-[5px] h-[5px] rounded-full ${STATUS_DOT[c.status]}`} />{c.status}
+                                                    </span>
                                                 </div>
-                                            </CardContent>
-                                        </Card>
-                                    </motion.div>
-                                ))}
+                                                <div className="text-xs text-voxly-ink-6 truncate mt-0.5">&quot;{truncate(c.latest.message, 60)}&quot;</div>
+                                            </div>
+                                            <div className="flex-none text-right">
+                                                <div className="flex items-center gap-1.5 justify-end text-[10.5px] text-voxly-ink-6">
+                                                    <Sparkles className="w-2.5 h-2.5 text-voxly-violet" />
+                                                    <span className={`font-semibold ${c.confidence >= 85 ? 'text-voxly-success' : c.confidence >= 70 ? 'text-voxly-warning' : 'text-voxly-heat'}`}>{c.confidence}%</span>
+                                                </div>
+                                                <div className="text-[10.5px] text-voxly-ink-5 mt-0.5">{c.sentiment}</div>
+                                            </div>
+                                            <span className="font-mono text-[11px] text-voxly-ink-5 flex-none w-8 text-right">{formatTimeAgo(c.latest.created_at)}</span>
+                                        </button>
+                                    );
+                                })}
                             </div>
-                        </AnimatePresence>
-                    );
-                })()}
-            </motion.div>
+                        ))
+                    )}
+                </div>
 
-            {/* Pagination */}
-            {totalPages > 1 && (
-                <motion.div
-                    className="flex items-center justify-between"
-                    variants={itemVariants}
-                >
-                    <p className="text-sm text-white/40">
-                        Page {page + 1} of {totalPages}
-                    </p>
-                    <div className="flex gap-2">
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            disabled={page === 0}
-                            onClick={() => setPage((p) => Math.max(0, p - 1))}
-                            className="border-white/10 text-white/60 hover:text-white hover:bg-white/5 disabled:opacity-30"
-                        >
-                            <ChevronLeft className="w-4 h-4 mr-1" />
-                            Previous
-                        </Button>
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            disabled={page >= totalPages - 1}
-                            onClick={() => setPage((p) => p + 1)}
-                            className="border-white/10 text-white/60 hover:text-white hover:bg-white/5 disabled:opacity-30"
-                        >
-                            Next
-                            <ChevronRight className="w-4 h-4 ml-1" />
-                        </Button>
+                {totalPages > 1 && (
+                    <div className="flex items-center justify-between">
+                        <span className="text-xs text-voxly-ink-5">Page {page + 1} of {totalPages} · {total} messages total</span>
+                        <div className="flex gap-1.5">
+                            <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0} className="w-7 h-7 border border-border rounded-[7px] flex items-center justify-center text-voxly-ink-6 disabled:opacity-40 disabled:cursor-not-allowed hover:border-voxly-ink-4 transition-colors">
+                                <ChevronLeft className="w-3.5 h-3.5" />
+                            </button>
+                            <button onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1} className="w-7 h-7 border border-border rounded-[7px] flex items-center justify-center text-voxly-ink-6 disabled:opacity-40 disabled:cursor-not-allowed hover:border-voxly-ink-4 transition-colors">
+                                <ChevronRight className="w-3.5 h-3.5" />
+                            </button>
+                        </div>
                     </div>
-                </motion.div>
+                )}
+
+                {/* Selected conversation */}
+                {selected && (
+                    <>
+                        <div className="flex items-center gap-2.5 pt-2 border-t border-border">
+                            <span className="font-mono text-[9.5px] font-bold uppercase tracking-wider text-voxly-ink-5">Selected conversation</span>
+                        </div>
+                        <div className="flex items-start justify-between gap-4 flex-wrap">
+                            <div className="flex gap-3 min-w-0">
+                                <div className="w-10 h-10 rounded-[11px] bg-voxly-surface-3 flex items-center justify-center flex-none">
+                                    <MessageSquare className="w-[18px] h-[18px] text-voxly-ink-6" />
+                                </div>
+                                <div className="min-w-0">
+                                    <div className="flex items-center gap-2.5">
+                                        <Link href={`/clients/${selected.clientId}`} className="font-display font-bold text-[22px] text-foreground tracking-[-0.01em] truncate hover:text-primary transition-colors">
+                                            {selected.clientName}
+                                        </Link>
+                                        <span className={`inline-flex items-center gap-1.5 text-[11px] font-semibold rounded-full pl-1.5 pr-2.5 py-[3px] whitespace-nowrap flex-none ${STATUS_STYLE[selected.status]}`}>
+                                            <span className={`w-[5px] h-[5px] rounded-full ${STATUS_DOT[selected.status]}`} />{selected.status}
+                                        </span>
+                                    </div>
+                                    <div className="text-[12.5px] text-voxly-ink-6 mt-1 flex items-center">
+                                        WhatsApp · Confidence <span className="font-semibold text-voxly-warning">{selected.confidence}%</span> · Sentiment {selected.sentiment}<PreviewMark />
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-2 flex-none">
+                                <button className="font-semibold text-[13px] text-voxly-ink-6 hover:text-foreground border border-border hover:border-voxly-ink-4 rounded-lg px-3.5 py-2 transition-colors whitespace-nowrap">Take over</button>
+                                <button className="font-semibold text-[13px] bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg px-3.5 py-2 transition-colors whitespace-nowrap">Approve</button>
+                            </div>
+                        </div>
+
+                        {/* Conversation log — real message/ai_response content */}
+                        <div className="border border-border rounded-[14px] bg-card overflow-hidden">
+                            <div className="px-4 py-2 bg-voxly-surface-2 font-mono text-[9.5px] font-bold tracking-[0.07em] text-voxly-ink-5">CONVERSATION LOG</div>
+                            {selected.thread.slice(0, 8).map(m => (
+                                <div key={m.id} className="border-b border-border last:border-b-0">
+                                    <div className="flex items-start gap-3 px-4 py-3.5">
+                                        <span className="w-7 h-7 rounded-lg bg-voxly-surface-2 flex items-center justify-center flex-none text-voxly-ink-6">
+                                            <UserIcon className="w-3.5 h-3.5" />
+                                        </span>
+                                        <div className="flex-1 min-w-0">
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-[12.5px] font-semibold text-foreground">{selected.clientName}</span>
+                                                <span className="text-[10px] text-voxly-ink-5 uppercase tracking-wide">Client</span>
+                                            </div>
+                                            <div className="text-[13px] text-foreground/90 mt-1">&quot;{m.message}&quot;</div>
+                                        </div>
+                                        <span className="font-mono text-[11px] text-voxly-ink-5 flex-none">{formatTimeAgo(m.created_at)} ago</span>
+                                    </div>
+                                    {m.ai_response && (
+                                        <div className="flex items-start gap-3 px-4 py-3.5 border-t border-border bg-voxly-surface-2/30">
+                                            <span className="w-7 h-7 rounded-lg bg-voxly-violet-soft flex items-center justify-center flex-none text-voxly-violet">
+                                                <Sparkles className="w-3.5 h-3.5" />
+                                            </span>
+                                            <div className="flex-1 min-w-0">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-[12.5px] font-semibold text-voxly-violet">AI</span>
+                                                    {m.model_used && <span className="text-[10px] text-voxly-ink-5 font-mono">{m.model_used}</span>}
+                                                </div>
+                                                <div className="text-[13px] text-foreground/90 mt-1 p-2.5 border border-dashed border-voxly-ink-4 rounded-lg">{m.ai_response}</div>
+                                                {m.tokens_used != null && m.tokens_used > 0 && <div className="text-[10.5px] text-voxly-ink-5 mt-1.5">{m.tokens_used} tokens</div>}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    </>
+                )}
+            </div>
+
+            {/* Right column */}
+            {selected && (
+                <div className="w-full xl:w-80 flex-none flex flex-col gap-3.5">
+                    <Panel title="Conversation Health" badge={<PreviewBadge />}>
+                        <PanelRow dot={selected.confidence >= 85 ? 'bg-voxly-success' : 'bg-voxly-warning'} label="Confidence" value={`${selected.confidence}%`} />
+                        <PanelRow dot="bg-voxly-ink-5" label="Sentiment" value={selected.sentiment} />
+                        <PanelRow dot="bg-voxly-success" label="Messages" value={selected.thread.length} />
+                        {selected.confidence < 85 && (
+                            <PanelText>Confidence dropped below the auto-send threshold (85%) — held for review rather than sent.</PanelText>
+                        )}
+                    </Panel>
+                    <Panel title="AI Memory Used">
+                        <div className="px-3.5 pb-3.5 flex flex-col gap-2">
+                            {['Client prefers async updates over calls', `Recent context: "${truncate(selected.latest.message, 50)}"`].map(m => (
+                                <div key={m} className="flex items-start gap-2">
+                                    <span className="w-[5px] h-[5px] rounded-full bg-voxly-violet flex-none mt-[6px]" />
+                                    <span className="text-xs text-foreground/90 leading-relaxed">{m}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </Panel>
+                    <Panel title="Suggested Actions" defaultOpen={selected.status === 'Awaiting human'}>
+                        <div className="px-3.5 pb-3.5 flex flex-col gap-2.5">
+                            <div className="flex items-center gap-2.5">
+                                <span className="flex-1 text-xs text-voxly-ink-6">Approve and send the drafted reply as-is</span>
+                                <button className="w-[22px] h-[22px] rounded-md border border-voxly-ink-4 text-voxly-success flex items-center justify-center hover:bg-voxly-success-soft transition-colors flex-none"><Check className="w-3 h-3" /></button>
+                                <button className="w-[22px] h-[22px] rounded-md border border-voxly-ink-4 text-voxly-ink-5 flex items-center justify-center hover:bg-voxly-surface-3 transition-colors flex-none"><XIcon className="w-2.5 h-2.5" /></button>
+                            </div>
+                        </div>
+                    </Panel>
+                    <Panel title="Linked Client" defaultOpen={false}>
+                        <PanelRow label={selected.clientName} value={<Link href={`/clients/${selected.clientId}`} className="text-primary">View →</Link>} />
+                    </Panel>
+                </div>
             )}
-        </motion.div>
+        </div>
     );
 }

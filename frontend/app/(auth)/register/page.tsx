@@ -65,9 +65,9 @@ function GoogleIcon({ className }: { className?: string }) {
 
 /* ── Stats for left panel ── */
 const stats = [
-    { value: '10K+', label: 'Agencies' },
-    { value: '99.9%', label: 'Uptime' },
-    { value: '50M+', label: 'Messages Sent' },
+    { value: 'Open source', label: 'MIT licensed' },
+    { value: 'BYOK', label: 'Your AI keys' },
+    { value: '3', label: 'Channels' },
 ];
 
 const benefits = [

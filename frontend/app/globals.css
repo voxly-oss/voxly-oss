@@ -48,6 +48,59 @@
   }
 }
 
+/* ============================================================
+   Voxly App Shell — v3 "AI Work OS" design language
+   Scoped strictly to .voxly-app-shell (applied once, on the
+   authenticated app shell root in components/DashboardLayout.tsx).
+   Does NOT touch :root or .light above — the marketing landing
+   page, auth screens, docs, and /voxly-admin are unaffected and
+   keep the existing cosmic theme untouched.
+   Source: design-reference/Voxly Design Language.dc.html
+   ============================================================ */
+.voxly-app-shell {
+  --background: 240 6% 4%;
+  --foreground: 0 0% 96%;
+  --card: 240 11% 9%;
+  --card-foreground: 0 0% 96%;
+  --popover: 240 7% 11%;
+  --popover-foreground: 0 0% 96%;
+  --primary: 76 86% 63%;
+  --primary-foreground: 240 6% 4%;
+  --secondary: 240 7% 11%;
+  --secondary-foreground: 0 0% 96%;
+  --muted: 240 11% 9%;
+  --muted-foreground: 240 3% 49%;
+  --accent: 240 7% 18%;
+  --accent-foreground: 0 0% 96%;
+  --destructive: 345 100% 65%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 240 5% 16%;
+  --input: 240 5% 16%;
+  --ring: 76 86% 63%;
+  --radius: 0.625rem;
+
+  /* v3-only extensions (not part of the base shadcn semantic set) */
+  --voxly-violet: 252 100% 68%;
+  --voxly-success: 145 63% 49%;
+  --voxly-warning: 36 100% 64%;
+  --voxly-heat: 345 100% 65%;
+  --voxly-surface: 240 11% 9%;
+  --voxly-surface-2: 240 7% 11%;
+  --voxly-surface-3: 240 7% 18%;
+  --voxly-ink-4: 240 5% 30%;
+  --voxly-ink-5: 240 3% 49%;
+  --voxly-ink-6: 240 2% 72%;
+  --voxly-lime-soft: color-mix(in srgb, hsl(var(--primary)) 14%, transparent);
+  --voxly-violet-soft: color-mix(in srgb, hsl(var(--voxly-violet)) 14%, transparent);
+  --voxly-success-soft: color-mix(in srgb, hsl(var(--voxly-success)) 14%, transparent);
+  --voxly-warning-soft: color-mix(in srgb, hsl(var(--voxly-warning)) 14%, transparent);
+  --voxly-heat-soft: color-mix(in srgb, hsl(var(--voxly-heat)) 14%, transparent);
+
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: var(--font-inter), system-ui, -apple-system, sans-serif;
+}
+
 @layer base {
   * {
     @apply border-border;

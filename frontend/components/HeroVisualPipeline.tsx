@@ -130,7 +130,7 @@ export default function HeroVisualPipeline() {
                             </div>
                             <div className="flex-1">
                                 <p className="text-white text-xs font-semibold mb-1">New update for Client X</p>
-                                <p className="text-white/50 text-[10px] leading-relaxed">"The Voxly team just pushed a new feature to production. Click here to view the PR."</p>
+                                <p className="text-white/50 text-[10px] leading-relaxed">&quot;The Voxly team just pushed a new feature to production. Click here to view the PR.&quot;</p>
                             </div>
                         </motion.div>
                     )}

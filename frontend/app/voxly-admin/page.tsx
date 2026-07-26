@@ -178,7 +178,7 @@ function AuthGate({ onUnlock }: { onUnlock: (secret: string) => void }) {
                 </div>
                 <h2 className="text-xl font-bold text-white mb-2">Session Expired</h2>
                 <p className="text-white/40 text-sm mb-6">
-                    Your login session has expired. Please sign in again as the super admin account, then you'll be brought back here automatically.
+                    Your login session has expired. Please sign in again as the super admin account, then you&apos;ll be brought back here automatically.
                 </p>
                 <button onClick={() => { localStorage.removeItem('access_token'); window.location.href = '/login?redirect=/voxly-admin'; }}
                     className="w-full py-3 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white font-semibold rounded-xl transition-all flex items-center justify-center gap-2">
