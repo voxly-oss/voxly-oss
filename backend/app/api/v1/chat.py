@@ -9,6 +9,7 @@ from app.models.project import Project
 from app.models.milestone import Milestone
 from app.models.chat_history import ChatHistory
 from app.models.conversation_state import ConversationState
+from app.models.github_cache import GitHubCache
 from app.schemas.conversation import (
     ConversationStateResponse,
     ConversationStateUpdate,
@@ -18,9 +19,10 @@ from app.schemas.conversation import (
     ConversationSummaryResponse,
     ConversationsListResponse,
 )
+from app.schemas.project import GitHubStatsSchema
 from app.services.ai_service import generate_client_response
 from app.services.cache_service import get_github_stats_cached
-from app.services.messaging_core import upsert_conversation_state, broadcast_state_changed
+from app.services.messaging_core import upsert_conversation_state, broadcast_state_changed, _get_client_project
 from app.websockets.manager import manager
 from app.rate_limit import limiter
 from app.config import settings
@@ -153,6 +155,25 @@ def _to_message_response(h: ChatHistory, client_id: UUID, client_name: str) -> C
     )
 
 
+def _to_github_stats(cache: Optional[GitHubCache]):
+    """Milestone 5 — reuses the exact same github_cache row / schema Phase 2's
+    ProjectResponse.github_stats already exposes. No new fetch, no new cache;
+    None when there's nothing real to report (no project, no repo, never synced)."""
+    if not cache:
+        return None
+    return GitHubStatsSchema(
+        commits_count=cache.commits_count,
+        commits_last_7_days=cache.commits_last_7_days,
+        open_issues=cache.open_issues,
+        closed_issues=cache.closed_issues,
+        pull_requests=cache.pull_requests,
+        last_commit_message=cache.last_commit_message,
+        last_commit_date=cache.last_commit_date,
+        progress_percent=cache.progress_percent,
+        synced_at=cache.synced_at,
+    )
+
+
 @router.get(
     "/history/{client_id}",
     response_model=ChatHistoryResponse,
@@ -193,6 +214,15 @@ async def get_chat_history(*,
 
     state = db.query(ConversationState).filter(ConversationState.client_id == client_id).first()
 
+    # Milestone 5: same project-resolution logic messaging_core.py already
+    # uses to decide which project is "the" conversation's context (active
+    # first, else any project) — reused, not reimplemented.
+    project = _get_client_project(db, client)
+    github_cache = (
+        db.query(GitHubCache).filter(GitHubCache.project_id == project.id).first()
+        if project else None
+    )
+
     return ChatHistoryResponse(
         client_id=client.id,
         client_name=client.name,
@@ -200,6 +230,7 @@ async def get_chat_history(*,
         status_updated_at=state.updated_at if state else None,
         count=len(history),
         messages=[_to_message_response(h, client.id, client.name) for h in history],
+        github_stats=_to_github_stats(github_cache),
     )
 
 
@@ -375,11 +406,34 @@ async def list_conversations(*,
         for c in db.query(Client).filter(Client.id.in_(page_client_ids)).all()
     }
 
+    # Milestone 5: batched equivalent of messaging_core._get_client_project's
+    # "active project first, else any project" preference, for just this
+    # page's clients (bounded, no N+1) — then one lookup into the existing
+    # github_cache table for whichever projects came back with a repo synced.
+    page_projects = (
+        db.query(Project)
+        .filter(Project.client_id.in_(page_client_ids), Project.deleted_at.is_(None))
+        .all()
+    )
+    project_by_client = {}
+    for p in page_projects:
+        existing = project_by_client.get(p.client_id)
+        if existing is None or (p.status == "active" and existing.status != "active"):
+            project_by_client[p.client_id] = p
+    github_caches = {
+        gc.project_id: gc
+        for gc in db.query(GitHubCache)
+        .filter(GitHubCache.project_id.in_([p.id for p in project_by_client.values()]))
+        .all()
+    } if project_by_client else {}
+
     conversations = []
     for client_id in page_client_ids:
         latest = latest_by_client.get(client_id)
         state = states.get(client_id)
         client_obj = clients.get(client_id)
+        project = project_by_client.get(client_id)
+        cache = github_caches.get(project.id) if project else None
         conversations.append(ConversationSummaryResponse(
             client_id=client_id,
             client_name=client_obj.name if client_obj else "Unknown",
@@ -392,6 +446,7 @@ async def list_conversations(*,
             status_updated_at=state.updated_at if state else None,
             confidence=latest.confidence if latest else None,
             sentiment=latest.sentiment if latest else None,
+            github_stats=_to_github_stats(cache),
         ))
 
     return ConversationsListResponse(total=total, count=len(conversations), conversations=conversations)

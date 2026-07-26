@@ -3,6 +3,8 @@ from typing import List, Literal, Optional
 from uuid import UUID
 from pydantic import BaseModel
 
+from app.schemas.project import GitHubStatsSchema
+
 ConversationStatus = Literal["awaiting_human", "ai_handling", "resolved", "escalated"]
 
 
@@ -55,6 +57,11 @@ class ChatHistoryResponse(BaseModel):
     status_updated_at: Optional[datetime] = None
     count: int
     messages: List[ChatMessageResponse]
+    github_stats: Optional[GitHubStatsSchema] = None  # Milestone 5 — the
+    # conversation's relevant project's real synced GitHub stats (same
+    # github_cache table Project.github_stats already reads — no new fetch,
+    # no new cache). None when the client has no project, the project has no
+    # github_repo, or it hasn't synced yet.
 
 
 class AllMessagesResponse(BaseModel):
@@ -79,6 +86,7 @@ class ConversationSummaryResponse(BaseModel):
     status_updated_at: Optional[datetime] = None
     confidence: Optional[float] = None
     sentiment: Optional[str] = None
+    github_stats: Optional[GitHubStatsSchema] = None  # Milestone 5, same source/semantics as ChatHistoryResponse.github_stats above
 
 
 class ConversationsListResponse(BaseModel):
