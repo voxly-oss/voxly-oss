@@ -10,10 +10,18 @@ from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
 import httpx
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
 from app.config import settings
 from app.database import get_db
 from app.models.user import User
+from app.models.client import Client
+from app.models.api_key import APIKey
+from app.models.user_ai_key import UserAIKey
+from app.models.subscription import Subscription
+from app.models.usage_log import UsageLog
+from app.models.organization import Organization
+from app.models.membership import Membership
 from app.schemas.user import (
     UserCreate,
     UserResponse,
@@ -698,20 +706,78 @@ async def export_user_data(*,
 
 @router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
 @limiter.limit("2/minute")
-async def delete_user_account(*, 
+async def delete_user_account(*,
     request: Request,
     current_user: Annotated[User , Depends(get_current_user)],
     db: Annotated[Session , Depends(get_db)],
 ):
-    """GDPR Endpoint: Permanently and fully erase a user account."""
+    """GDPR Endpoint: Permanently and fully erase a user account.
+
+    Single transaction, ordered to satisfy two RESTRICT foreign keys that a
+    flat `db.delete(user)` cannot: organizations.owner_user_id (only clearable
+    by deleting the user's Organization row first) and clients/api_keys/
+    user_ai_keys/subscriptions/usage_logs.org_id (only clearable by deleting
+    those rows before the Organization they reference). See
+    ACCOUNT_DELETION_DESIGN.md for the full dependency graph and the ordering
+    proof this implements.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    # Lock this user's row for the duration of the transaction. Every table
+    # this transaction touches carries a NOT NULL FK back to users.id, so any
+    # concurrent insert referencing this user -- including tenant_context.py's
+    # self-heal creating a brand-new Organization -- must acquire a
+    # FOR KEY SHARE lock on this row first, which conflicts with FOR UPDATE
+    # and blocks until this transaction commits or rolls back.
+    locked_user = (
+        db.query(User).filter(User.id == current_user.id).with_for_update().one()
+    )
+
+    org = (
+        db.query(Organization)
+        .filter(Organization.owner_user_id == locked_user.id)
+        .with_for_update()
+        .first()
+    )
+
+    if org is not None:
+        other_member = (
+            db.query(Membership)
+            .filter(Membership.org_id == org.id, Membership.user_id != locked_user.id)
+            .first()
+        )
+        if other_member is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Transfer organization ownership before deleting your account",
+            )
+
     try:
-        db.delete(current_user)
+        if org is not None:
+            # Clear every row carrying this org's org_id before the org itself
+            # can be deleted (RESTRICT). Bulk delete: one DELETE statement per
+            # table, relying on the already-declared DB-level ON DELETE CASCADE
+            # for everything downstream (projects, milestones, github_cache,
+            # chat_history, conversation_states).
+            for model in (Client, APIKey, UserAIKey, Subscription, UsageLog):
+                db.query(model).filter(model.user_id == locked_user.id).delete(
+                    synchronize_session=False
+                )
+            db.flush()
+
+            # Organization can now be deleted (memberships/invitations CASCADE
+            # automatically). Flushed explicitly so this DELETE executes before
+            # the user delete below, rather than sharing an unordered flush
+            # with it.
+            db.delete(org)
+            db.flush()
+
+        db.delete(locked_user)
         db.commit()
-    except Exception as e:
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.error(f"Failed to delete user {current_user.id}: {e}")
+    except IntegrityError:
         db.rollback()
+        logger.error("Account deletion failed for user %s: unhandled FK constraint", current_user.id, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to delete account"
