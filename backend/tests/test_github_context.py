@@ -89,8 +89,11 @@ def test_to_github_stats_none_when_no_cache():
     assert _to_github_stats(None) is None
 
 
-def test_to_github_stats_maps_real_fields(db_session):
-    cache = _add_cache_row(db_session, "00000000-0000-0000-0000-000000000001", commits_count=99)
+def test_to_github_stats_maps_real_fields(client: TestClient, db_session):
+    token = _register_and_get_token(client, "ghstatsfields@test.com")
+    client_id = _create_client(client, token, phone="+911700000099")
+    project_id = _create_project(client, token, client_id)
+    cache = _add_cache_row(db_session, project_id, commits_count=99)
     result = _to_github_stats(cache)
     assert result is not None
     assert result.commits_count == 99
