@@ -47,18 +47,25 @@ class SendMessageResponse(BaseModel):
     },
 )
 @limiter.limit("10/minute")
-async def send_follow_up(*, 
-    request: SendMessageRequest,
-    raw_request: Request,
+async def send_follow_up(*,
+    request: Request,
+    payload: SendMessageRequest,
     background_tasks: BackgroundTasks,
     db: Annotated[Session , Depends(get_db)],
     current_user: Annotated[User , Depends(get_current_user)],
 ):
-    """Send a custom follow-up message to a client via WhatsApp."""
-    
+    """Send a custom follow-up message to a client via WhatsApp.
+
+    `request` MUST be the starlette Request: slowapi's @limiter.limit wrapper
+    looks up a parameter by that exact name and raises if it is anything else,
+    which turned every call into a 500 whenever the limiter was enabled (i.e.
+    always, outside tests). The request body is bound to `payload`, matching
+    the convention every other rate-limited handler here already follows.
+    """
+
     # Verify client belongs to user
     client = db.query(Client).filter(
-        Client.id == request.client_id,
+        Client.id == payload.client_id,
         Client.user_id == current_user.id
     ).first()
     
@@ -69,12 +76,12 @@ async def send_follow_up(*,
         raise HTTPException(status_code=400, detail="Client has no phone number")
     
     # Send in background
-    background_tasks.add_task(send_custom_message, client.phone, request.message)
-    
+    background_tasks.add_task(send_custom_message, client.phone, payload.message)
+
     logger.info("Follow-up message queued for client (PII masked)")
-    
+
     return SendMessageResponse(
         success=True,
         client_name=client.name,
-        message=request.message
+        message=payload.message
     )
