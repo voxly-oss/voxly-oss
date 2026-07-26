@@ -304,7 +304,7 @@ export default function LoginPage() {
                     <div className="relative z-10">
                         <div className="flex items-center gap-2 text-white/20 text-xs">
                             <Shield className="w-3.5 h-3.5" />
-                            <span>SOC 2 compliant · 256-bit encryption · 99.9% uptime</span>
+                            <span>TLS encrypted · Bring your own AI keys</span>
                         </div>
                     </div>
                 </div>

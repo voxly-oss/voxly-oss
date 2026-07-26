@@ -157,10 +157,10 @@ export default function ChatPage() {
                             
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-lg mt-4">
                                 <button onClick={() => setInput("What is the status of the current project?")} className="p-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/5 text-xs text-left transition-colors">
-                                    "When is the next milestone?"
+                                    &quot;When is the next milestone?&quot;
                                 </button>
                                 <button onClick={() => setInput("Summarize recent GitHub activity.")} className="p-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/5 text-xs text-left transition-colors">
-                                    "Summarize recent GitHub activity"
+                                    &quot;Summarize recent GitHub activity&quot;
                                 </button>
                             </div>
                         </div>

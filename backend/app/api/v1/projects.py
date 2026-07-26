@@ -3,7 +3,7 @@ from uuid import UUID
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
 from app.models.user import User
@@ -34,7 +34,11 @@ async def list_projects(*,
     """List all projects for the current user's clients."""
     user_client_ids = get_user_client_ids(db, current_user.id)
     
-    query = db.query(Project).filter(Project.client_id.in_(user_client_ids), Project.deleted_at.is_(None))
+    query = (
+        db.query(Project)
+        .options(selectinload(Project.github_cache))
+        .filter(Project.client_id.in_(user_client_ids), Project.deleted_at.is_(None))
+    )
     
     # Filter by specific client if provided
     if client_id:
@@ -115,9 +119,10 @@ async def get_project(*,
 ):
     """Get a specific project by ID."""
     user_client_ids = get_user_client_ids(db, current_user.id)
-    
+
     project = (
         db.query(Project)
+        .options(selectinload(Project.github_cache))
         .filter(Project.id == project_id, Project.client_id.in_(user_client_ids), Project.deleted_at.is_(None))
         .first()
     )

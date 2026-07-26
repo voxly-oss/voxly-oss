@@ -82,6 +82,8 @@ export const authAPI = {
         api.post('/api/v1/auth/password-reset/request', { email }),
     confirmPasswordReset: (data: { token: string; new_password: string }) =>
         api.post('/api/v1/auth/password-reset/confirm', data),
+    exportData: () => api.get('/api/v1/auth/me/export'),
+    deleteAccount: () => api.delete('/api/v1/auth/me'),
 };
 
 // ─── Clients API ───

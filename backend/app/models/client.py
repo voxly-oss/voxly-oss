@@ -28,6 +28,9 @@ class Client(Base):
     user = relationship("User", back_populates="clients")
     projects = relationship("Project", back_populates="client", cascade="all, delete-orphan")
     chat_history = relationship("ChatHistory", back_populates="client", cascade="all, delete-orphan")
+    conversation_state = relationship(
+        "ConversationState", back_populates="client", uselist=False, cascade="all, delete-orphan"
+    )
     
     def __repr__(self):
         return f"<Client {self.name}>"

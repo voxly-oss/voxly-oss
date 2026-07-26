@@ -82,7 +82,7 @@ def _mem_get(key: str) -> Optional[Any]:
         if entry is None:
             return None
         value, expiry = entry
-        if time.monotonic() > expiry:
+        if time.monotonic() >= expiry:
             _mem_cache.pop(key, None)
             return None
         return value

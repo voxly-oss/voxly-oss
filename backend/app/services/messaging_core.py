@@ -21,11 +21,12 @@ from app.models.client import Client
 from app.models.project import Project
 from app.models.milestone import Milestone
 from app.models.chat_history import ChatHistory
+from app.models.conversation_state import ConversationState
 from app.services.ai_service import generate_client_response
 from app.services.cache_service import get_github_stats_cached
 from app.services.localization import detect_language, t
 from app.services.transcription_service import transcribe_audio
-from app.websockets.manager import manager
+from app.websockets.manager import manager, build_event
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +81,20 @@ def _serialize_project_milestones(db: Session, project: Optional[Project]) -> li
     ]
 
 
+def _detect_message_language(message: str) -> Optional[str]:
+    """Real detected language, or None when detection didn't actually run.
+
+    detect_language() returns 'en' unconditionally when LANGUAGE_DETECTION_ENABLED
+    is off — that's a safe no-op default for the canned-string layer, not a real
+    per-message detection result. Persisting it as if it were a genuine 'en'
+    detection would misrepresent a disabled feature as analyzed data, so this
+    returns None (-> NULL) whenever detection isn't actually enabled.
+    """
+    if not settings.LANGUAGE_DETECTION_ENABLED:
+        return None
+    return detect_language(message)
+
+
 def _save_chat_history(
     db: Session,
     client: Client,
@@ -88,10 +103,15 @@ def _save_chat_history(
     reply: str,
     ai_result: dict,
     channel: str,
-) -> None:
+) -> Optional[ChatHistory]:
     if not project:
-        return
+        return None
     try:
+        # On a failed AI turn, the persisted `reply` is a hardcoded apology,
+        # not model output — no real model produced it, so model_used is
+        # genuinely unknown (NULL), not the "error" sentinel that used to be
+        # stored here.
+        ai_succeeded = bool(ai_result.get("success"))
         chat_entry = ChatHistory(
             id=uuid.uuid4(),
             client_id=client.id,
@@ -99,32 +119,152 @@ def _save_chat_history(
             message=message or "",
             response=reply,
             tokens_used=ai_result.get("tokens_used", 0),
-            model_used=ai_result.get("model", "unknown"),
+            model_used=ai_result.get("model") if ai_succeeded else None,
             channel=channel,
+            language=_detect_message_language(message),
+            ai_response_time_ms=ai_result.get("latency_ms"),
+            # confidence/sentiment intentionally omitted — no real signal
+            # exists to populate them with; they stay NULL via the column
+            # default, per the "never fabricate" requirement.
         )
         db.add(chat_entry)
         db.commit()
+        db.refresh(chat_entry)
+        return chat_entry
     except Exception as exc:
         logger.error(f"Failed to save chat history: {exc}")
+        return None
+
+
+def upsert_conversation_state(
+    db: Session,
+    client_id: uuid.UUID,
+    status: str,
+    updated_by_user_id: Optional[uuid.UUID] = None,
+) -> ConversationState:
+    """Create or update the conversation-state row for a client.
+
+    updated_by_user_id=None means this was set automatically by the AI
+    pipeline; a real user id means a human explicitly changed it (see
+    PATCH /api/v1/chat/conversations/{client_id}/status in chat.py).
+    """
+    state = db.query(ConversationState).filter(ConversationState.client_id == client_id).first()
+    if state:
+        state.status = status
+        state.updated_by_user_id = updated_by_user_id
+    else:
+        state = ConversationState(
+            client_id=client_id,
+            status=status,
+            updated_by_user_id=updated_by_user_id,
+        )
+        db.add(state)
+    db.commit()
+    db.refresh(state)
+    return state
+
+
+async def _update_conversation_state_from_ai_result(db: Session, client: Client, ai_result: dict) -> None:
+    """Automatic transition after an AI turn — driven by the real ai_result["success"]
+    signal, not a fabricated heuristic. A failed AI turn (all providers exhausted, or
+    an error) genuinely means a human needs to look at it; a successful one means the
+    AI handled this turn. Any prior manual state (resolved/escalated) is intentionally
+    overwritten — new client activity means the conversation is active again."""
+    try:
+        status = "ai_handling" if ai_result.get("success") else "awaiting_human"
+        state = upsert_conversation_state(db, client.id, status, updated_by_user_id=None)
+        await broadcast_state_changed(client, state)
+    except Exception as exc:
+        logger.error(f"Failed to update conversation state: {exc}")
+
+
+async def broadcast_state_changed(client: Client, state: ConversationState) -> None:
+    """Broadcast a conversation.state_changed event — fired from both the automatic
+    pipeline above and the manual PATCH endpoint in chat.py, so every real state
+    transition (automatic or human) reaches the dashboard live."""
+    try:
+        org_id = str(client.org_id) if client.org_id else None
+        await manager.broadcast(
+            build_event(
+                "conversation.state_changed",
+                payload={
+                    "client_id": str(client.id),
+                    "status": state.status,
+                    "updated_by_user_id": str(state.updated_by_user_id) if state.updated_by_user_id else None,
+                },
+                conversation_id=str(client.id),
+                organization_id=org_id,
+            ),
+            str(client.user_id),
+            conversation_id=str(client.id),
+        )
+    except Exception as exc:
+        logger.error(f"WebSocket broadcast (state_changed) failed: {exc}")
 
 
 async def _broadcast_incoming(client: Client, message: str, channel: str) -> None:
-    """Broadcast incoming message to the tenant's dashboard via WebSocket."""
+    """Broadcast conversation.message_received — fired immediately on receipt,
+    before the AI has processed anything. Gives the dashboard an instant "someone
+    is texting" signal; does not carry an AI reply, since none exists yet (see
+    _broadcast_completed below for that)."""
     try:
+        org_id = str(client.org_id) if client.org_id else None
         await manager.broadcast(
-            {
-                "type": "incoming_message",
-                "message": {
+            build_event(
+                "conversation.message_received",
+                payload={
                     "client_id": str(client.id),
                     "client_name": client.name,
                     "message": message,
                     "channel": channel,
                 },
-            },
+                conversation_id=str(client.id),
+                organization_id=org_id,
+            ),
             str(client.user_id),
+            conversation_id=str(client.id),
         )
     except Exception as exc:
-        logger.error(f"WebSocket broadcast failed: {exc}")
+        logger.error(f"WebSocket broadcast (message_received) failed: {exc}")
+
+
+async def _broadcast_completed(client: Client, chat_entry: Optional[ChatHistory]) -> None:
+    """Broadcast conversation.message_completed — fired once the full turn is
+    persisted, carrying the real AI reply (or real fallback apology on failure).
+    This is the event that fixes the audit finding that the AI's reply never
+    reached the dashboard in real time: the old single broadcast fired before
+    the reply existed at all."""
+    if not chat_entry:
+        return
+    try:
+        org_id = str(client.org_id) if client.org_id else None
+        await manager.broadcast(
+            build_event(
+                "conversation.message_completed",
+                payload={
+                    "id": str(chat_entry.id),
+                    "client_id": str(client.id),
+                    "client_name": client.name,
+                    "message": chat_entry.message,
+                    "response": chat_entry.response,
+                    "ai_response": chat_entry.response,
+                    "model_used": chat_entry.model_used,
+                    "tokens_used": chat_entry.tokens_used,
+                    "channel": chat_entry.channel,
+                    "confidence": chat_entry.confidence,
+                    "sentiment": chat_entry.sentiment,
+                    "language": chat_entry.language,
+                    "ai_response_time_ms": chat_entry.ai_response_time_ms,
+                    "created_at": chat_entry.created_at.isoformat() if chat_entry.created_at else None,
+                },
+                conversation_id=str(client.id),
+                organization_id=org_id,
+            ),
+            str(client.user_id),
+            conversation_id=str(client.id),
+        )
+    except Exception as exc:
+        logger.error(f"WebSocket broadcast (message_completed) failed: {exc}")
 
 
 # ── Main pipeline ─────────────────────────────────────────────────────────────
@@ -212,7 +352,9 @@ async def process_incoming_message(
         if not reply:
             reply = t("ai_empty", detect_language(message))
 
-        _save_chat_history(db, client, project, message, reply, ai_result, channel)
+        chat_entry = _save_chat_history(db, client, project, message, reply, ai_result, channel)
+        await _broadcast_completed(client, chat_entry)
+        await _update_conversation_state_from_ai_result(db, client, ai_result)
 
         elapsed_ms = int((time.monotonic() - start_ts) * 1000)
         logger.info(

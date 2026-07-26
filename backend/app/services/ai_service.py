@@ -95,6 +95,7 @@ async def generate_client_response(
         providers_to_try = _build_fallback_chain()
 
     last_error: Optional[str] = None
+    total_start_ts = time.monotonic()
 
     for attempt, pname in enumerate(providers_to_try):
         start_ts = time.monotonic()
@@ -113,9 +114,10 @@ async def generate_client_response(
             latency_ms = int((time.monotonic() - start_ts) * 1000)
 
             if result["success"]:
+                total_latency_ms = int((time.monotonic() - total_start_ts) * 1000)
                 logger.info(
-                    "[AI] OK provider=%s model=%s tokens=%s latency=%dms",
-                    pname, result.get("model"), result.get("tokens_used", 0), latency_ms,
+                    "[AI] OK provider=%s model=%s tokens=%s latency=%dms total=%dms",
+                    pname, result.get("model"), result.get("tokens_used", 0), latency_ms, total_latency_ms,
                 )
                 return {
                     "response": result["response"],
@@ -124,6 +126,11 @@ async def generate_client_response(
                     "provider": pname,
                     "success": True,
                     "error": None,
+                    # Wall-clock time across every attempt (including any
+                    # earlier failed providers before this one succeeded) —
+                    # what the client actually waited, not just the winning
+                    # attempt's own duration.
+                    "latency_ms": total_latency_ms,
                 }
 
             # Provider returned success=False (e.g. Gemini 503)
@@ -154,9 +161,10 @@ async def generate_client_response(
             break
 
     # All providers exhausted — never send raw error to client
+    total_latency_ms = int((time.monotonic() - total_start_ts) * 1000)
     logger.error(
-        "[AI] All providers exhausted for client=%r. Last error: %s",
-        client_name, last_error,
+        "[AI] All providers exhausted for client=%r. Last error: %s total=%dms",
+        client_name, last_error, total_latency_ms,
     )
     return {
         "response": (
@@ -168,4 +176,5 @@ async def generate_client_response(
         "provider": "none",
         "success": False,
         "error": last_error,
+        "latency_ms": total_latency_ms,
     }
