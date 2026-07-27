@@ -305,6 +305,7 @@ async def impersonate_user(*,
             "sub": str(user.id),
             "email": user.email,
             "impersonated_by": admin.email,
+            "tv": user.token_version or 0,
         },
         expires_delta=timedelta(minutes=15),
     )

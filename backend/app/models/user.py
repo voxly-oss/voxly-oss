@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Boolean, DateTime
+from sqlalchemy import Column, String, Boolean, DateTime, Integer
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from app.database import Base
@@ -24,6 +24,10 @@ class User(Base):
     subscription_tier = Column(String(50), default="free")  # Legacy field, use subscription relationship
     billing_region = Column(String(10), default="INTL")  # "IN" for India (Razorpay), "INTL" for international (Stripe)
     is_active = Column(Boolean, default=True)
+    # Bumped on password change; embedded in every JWT at mint time and
+    # compared on every request in get_current_user. A stolen token can't
+    # survive the victim resetting their password once this no longer matches.
+    token_version = Column(Integer, nullable=False, default=0, server_default="0")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
