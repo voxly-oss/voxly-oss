@@ -6,6 +6,7 @@ from app.utils.auth import get_current_user
 from app.services.ai_agent import VoxlyAgent
 from app.rate_limit import limiter
 from typing import Annotated, Optional, List
+from uuid import UUID
 from pydantic import BaseModel
 import logging
 
@@ -34,8 +35,21 @@ async def _build_project_context(
     if not context or not context.startswith("project:"):
         return ""
 
+    not_found_message = (
+        "\n\n[System View]: User requested project context, "
+        "but project was not found or access denied."
+    )
+
+    raw_project_id = context.split(":", 1)[1]
     try:
-        project_id = context.split(":", 1)[1]
+        project_id = UUID(raw_project_id)
+    except ValueError:
+        # Not a UUID at all -- same as "not found", never let the raw input
+        # (which could be malformed or adversarial) reach a query or a log
+        # line the model might echo.
+        return not_found_message
+
+    try:
         user_client_ids = [
             client.id
             for client in db.query(Client.id).filter(Client.user_id == current_user.id).all()
@@ -49,10 +63,7 @@ async def _build_project_context(
             .first()
         )
         if not project:
-            return (
-                "\n\n[System View]: User requested project context, "
-                "but project was not found or access denied."
-            )
+            return not_found_message
 
         context_lines = [
             f"[ACTIVE CONTEXT: PROJECT '{project.name}']",
@@ -70,8 +81,12 @@ async def _build_project_context(
                 )
 
         return "\n\n" + "\n".join(context_lines)
-    except Exception as exc:
-        return f"\n\n[System Error]: Failed to load context data: {exc}"
+    except Exception:
+        # Log the real driver/SQL exception server-side only -- it must never
+        # reach the LLM system prompt, which any authenticated user can elicit
+        # and the model may echo back verbatim.
+        logger.error("Failed to load project context for context=%r", context, exc_info=True)
+        return "\n\n[System Error]: Project context unavailable."
 
 @router.post("/chat", response_model=AdminChatResponse)
 @limiter.limit("20/minute")
