@@ -311,4 +311,5 @@ cutover). Do not start Step 2 work while any item is unchecked.
 | Date | Event | Details | Resolution |
 |---|---|---|---|
 | 2026-07-26 | Bake period started | `DUAL_READ_SHADOW_VERIFY_ENABLED=true` on `voxly-backend-00021-7kb` | — |
+| 2026-07-27 | Day 1 automated check | Window 2026-07-26T18:24:35Z → 2026-07-27T09:31:53Z. Mismatches: **0**. Internal failures: **0**. Traffic (real, excluding pre-flag requests): clients 8, projects 8 (incl. 1 `client_id`-filtered call), milestones 1, api-keys 1, ai-keys 1. | Clean, but thin: milestones/api-keys/ai-keys traffic so far is only the single smoke-test hit each at flag-enable time, no repeat real usage since — per §9 exit criterion 2, do not treat this as coverage yet. Watch whether this improves over the next few days. |
 | | | | |
