@@ -6,7 +6,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
-import { clientsAPI, projectsAPI, milestonesAPI } from '@/lib/api';
+import { clientsAPI, projectsAPI, milestonesAPI, chatAPI, channelsAPI } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -20,14 +20,14 @@ import {
 } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
 import {
-    ArrowLeft, Loader2, Plus, Sparkles, Code2, MessageSquare, Zap, Upload,
+    ArrowLeft, Loader2, Plus, Sparkles, MessageSquare,
     FileText, Clock, AlertTriangle, Trash2, Pencil, CheckCircle2,
 } from 'lucide-react';
 import Link from 'next/link';
 import { formatDate } from '@/lib/utils';
-import type { Client, Project, Milestone } from '@/types';
+import type { Client, Project, Milestone, ChatMessage, ChannelActivity } from '@/types';
 import { Panel, PanelRow, PanelText } from '@/components/SidePanel';
-import PreviewBadge, { PreviewMark } from '@/components/PreviewBadge';
+import { PreviewBanner, PreviewMark } from '@/components/PreviewBadge';
 
 const milestoneSchema = z.object({
     title: z.string().min(1, 'Title is required'),
@@ -38,14 +38,6 @@ const milestoneSchema = z.object({
 });
 type MilestoneFormData = z.infer<typeof milestoneSchema>;
 
-// Deterministic placeholder health — no per-project health-scoring endpoint yet.
-function hashOf(s: string) {
-    let h = 2166136261;
-    for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
-    return h >>> 0;
-}
-const mockHealth = (id: string) => 75 + (hashOf(id) % 26);
-
 const MILESTONE_STATUS_STYLE: Record<string, string> = {
     pending: 'bg-voxly-surface-3 text-voxly-ink-6',
     in_progress: 'bg-primary/15 text-primary',
@@ -53,19 +45,22 @@ const MILESTONE_STATUS_STYLE: Record<string, string> = {
     blocked: 'bg-voxly-heat-soft text-voxly-heat',
 };
 
-// No per-project GitHub/activity/document API is wired yet — mock, matching
-// the design, clearly commented. Milestones below are fully real.
-const ACTIVITY = [
-    { group: 'JUST NOW', items: [
-        { icon: Sparkles, color: 'text-voxly-violet', bar: 'bg-voxly-violet', title: 'Voxly replied to client', sub: 'Confirmed the latest fix is live in production', tag: 'AI', dot: true, time: '2m' },
-        { icon: Code2, color: 'text-voxly-ink-6', bar: 'bg-voxly-ink-4', title: 'PR merged — fix(webhook): retry', sub: 'by team · 3 files changed', tag: 'GitHub', time: '14m' },
-        { icon: Upload, color: 'text-voxly-success', bar: 'bg-voxly-success', title: 'Deployed to production', sub: 'all checks passed', tag: 'Deploy', time: '20m' },
-    ]},
-    { group: 'EARLIER TODAY', items: [
-        { icon: MessageSquare, color: 'text-voxly-ink-6', bar: 'bg-primary', title: 'Client message', sub: '"any update on the launch date?"', tag: 'WhatsApp', dot: true, time: '22m' },
-        { icon: Zap, color: 'text-voxly-violet', bar: 'bg-voxly-violet', title: 'Automation ran — Weekly digest', sub: '0 failures', tag: 'Automation', time: '1h' },
-    ]},
-];
+const timeAgo = (ts: string) => {
+    const m = Math.floor((Date.now() - new Date(ts).getTime()) / 60000);
+    if (m < 1) return 'just now';
+    if (m < 60) return `${m}m`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h}h`;
+    return `${Math.floor(h / 24)}d`;
+};
+
+function groupLabel(iso: string) {
+    const mins = (Date.now() - new Date(iso).getTime()) / 60000;
+    if (mins < 15) return 'JUST NOW';
+    if (mins < 24 * 60) return 'EARLIER TODAY';
+    if (mins < 48 * 60) return 'YESTERDAY';
+    return 'EARLIER';
+}
 
 export default function MilestonesPage() {
     const params = useParams();
@@ -91,6 +86,24 @@ export default function MilestonesPage() {
         queryKey: ['milestones', { project_id: projectId }],
         queryFn: async () => (await milestonesAPI.list({ project_id: projectId })).data as Milestone[],
     });
+
+    // Real activity feed: this client's message thread. Scoped by client, not
+    // by project — that matches how conversations work everywhere else in the
+    // app (a client has one thread, not one per project).
+    const { data: thread = [] } = useQuery({
+        queryKey: ['conversation-thread', clientId],
+        queryFn: async () => (await chatAPI.clientHistory(clientId, 20)).data.messages as ChatMessage[],
+        enabled: !!clientId,
+    });
+
+    // Real per-channel activity for this client, so "connected" means real
+    // exchanged messages rather than a phone/email field being present.
+    const { data: channelActivity = [] } = useQuery({
+        queryKey: ['channel-activity'],
+        queryFn: async () => (await channelsAPI.list()).data as ChannelActivity[],
+        staleTime: 30_000,
+    });
+    const clientChannels = channelActivity.filter(a => a.client_id === clientId);
 
     const milestoneForm = useForm<MilestoneFormData>({
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -174,11 +187,24 @@ export default function MilestonesPage() {
         );
     }
 
-    const health = mockHealth(project.id);
+    const stats = project.github_stats ?? null;
     const upcomingMilestones = [...milestones]
         .filter(m => m.due_date && m.status !== 'completed')
         .sort((a, b) => new Date(a.due_date!).getTime() - new Date(b.due_date!).getTime())
         .slice(0, 2);
+
+    // Real activity, grouped the same way the design's feed was — just from
+    // actual messages instead of invented GitHub/deploy/automation events.
+    const activityItems = [...thread]
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+        .slice(0, 6);
+    const activityGroups: { label: string; items: ChatMessage[] }[] = [];
+    for (const m of activityItems) {
+        const label = groupLabel(m.created_at);
+        const last = activityGroups[activityGroups.length - 1];
+        if (last && last.label === label) last.items.push(m);
+        else activityGroups.push({ label, items: [m] });
+    }
 
     return (
         <div className="flex flex-col xl:flex-row gap-6 items-start">
@@ -202,7 +228,9 @@ export default function MilestonesPage() {
                                 <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold rounded-full pl-1.5 pr-2.5 py-[3px] bg-voxly-success-soft text-voxly-success flex-none">
                                     <span className="w-[5px] h-[5px] rounded-full bg-voxly-success" />{project.status}
                                 </span>
-                                <span className="inline-flex items-center gap-1 text-[11px] text-voxly-ink-5 flex-none">HEALTH<b className="font-display font-bold text-[13px] text-voxly-success">{health}</b><PreviewMark /></span>
+                                {stats && (
+                                    <span className="inline-flex items-center gap-1 text-[11px] text-voxly-ink-5 flex-none">GITHUB<b className="font-display font-bold text-[13px] text-voxly-success">{stats.progress_percent}%</b></span>
+                                )}
                             </div>
                             {project.github_repo && <div className="font-mono text-xs text-voxly-ink-5 mt-1">{project.github_repo}</div>}
                             {client && (
@@ -225,53 +253,62 @@ export default function MilestonesPage() {
                     </div>
                 </div>
 
-                <div className="rounded-xl border border-voxly-violet/30 bg-voxly-violet-soft px-4 py-3">
-                    <div className="font-mono text-[9.5px] font-bold tracking-[0.07em] text-voxly-violet mb-2.5">QUICK ACTIONS · ⌘K</div>
-                    <div className="flex gap-2 flex-wrap">
-                        {['Ask Voxly about this project', 'Summarize this week', 'Draft a status update', 'Run a deploy health check'].map(a => (
-                            <span key={a} className="inline-flex items-center gap-1.5 text-xs text-foreground/90 border border-voxly-violet/35 hover:bg-voxly-violet-soft rounded-md px-2.5 py-1.5 cursor-pointer transition-colors">
-                                <Sparkles className="w-3 h-3 text-voxly-violet" />{a}
-                            </span>
-                        ))}
-                    </div>
-                </div>
+                <Link
+                    href={`/chat?context=project:${project.id}`}
+                    className="rounded-xl border border-voxly-violet/30 bg-voxly-violet-soft px-4 py-3 flex items-center gap-2.5 hover:bg-voxly-violet-soft/70 transition-colors"
+                >
+                    <Sparkles className="w-4 h-4 text-voxly-violet flex-none" />
+                    <span className="text-xs text-foreground/90">Ask Voxly about this project — opens with this project&apos;s context loaded</span>
+                </Link>
 
-                <div className="flex items-center gap-[22px] px-[18px] py-3.5 border border-border rounded-xl bg-card flex-wrap">
-                    <div><span className="font-mono font-bold text-[15px] text-foreground">main</span><span className="text-[11.5px] text-voxly-ink-5 ml-1.5">branch</span></div>
-                    <div className="w-px h-4 bg-border" />
-                    <div><span className="font-display font-bold text-[17px] text-foreground">{project.github_sync_enabled ? '—' : '0'}</span><span className="text-[11.5px] text-voxly-ink-5 ml-1.5">open PRs</span></div>
-                    <div className="w-px h-4 bg-border" />
-                    <div><span className="font-display font-bold text-[17px] text-voxly-success">{project.github_sync_enabled ? 'passing' : '—'}</span><span className="text-[11.5px] text-voxly-ink-5 ml-1.5">build</span></div>
-                    <div className="w-px h-4 bg-border" />
-                    <div><span className="font-display font-bold text-[17px] text-foreground">{overallProgress}%</span><span className="text-[11.5px] text-voxly-ink-5 ml-1.5">overall progress</span></div>
-                </div>
+                {/* Real synced GitHub stats — from the same github_cache row
+                    Projects already reads. Absent (not zeroed) when there's no
+                    repo linked or it hasn't synced yet. */}
+                {stats ? (
+                    <div className="flex items-center gap-[22px] px-[18px] py-3.5 border border-border rounded-xl bg-card flex-wrap">
+                        <div><span className="font-display font-bold text-[17px] text-foreground">{stats.pull_requests}</span><span className="text-[11.5px] text-voxly-ink-5 ml-1.5">open PRs</span></div>
+                        <div className="w-px h-4 bg-border" />
+                        <div><span className="font-display font-bold text-[17px] text-foreground">{stats.open_issues}</span><span className="text-[11.5px] text-voxly-ink-5 ml-1.5">open issues</span></div>
+                        <div className="w-px h-4 bg-border" />
+                        <div><span className="font-display font-bold text-[17px] text-foreground">{stats.commits_last_7_days}</span><span className="text-[11.5px] text-voxly-ink-5 ml-1.5">commits (7d)</span></div>
+                        <div className="w-px h-4 bg-border" />
+                        <div><span className="font-display font-bold text-[17px] text-foreground">{overallProgress}%</span><span className="text-[11.5px] text-voxly-ink-5 ml-1.5">milestone progress</span></div>
+                    </div>
+                ) : (
+                    <div className="flex items-center gap-[22px] px-[18px] py-3.5 border border-border rounded-xl bg-card flex-wrap">
+                        <div><span className="font-display font-bold text-[17px] text-foreground">{overallProgress}%</span><span className="text-[11.5px] text-voxly-ink-5 ml-1.5">milestone progress</span></div>
+                        {!project.github_repo && (
+                            <span className="text-[11.5px] text-voxly-ink-5">No repository linked yet</span>
+                        )}
+                        {project.github_repo && (
+                            <span className="text-[11.5px] text-voxly-ink-5">Repository linked, not synced yet</span>
+                        )}
+                    </div>
+                )}
 
                 <div className="flex items-center gap-4">
                     <span className="font-display font-semibold text-[15px] text-foreground">Activity</span>
-                    <div className="flex-1" />
-                    <div className="flex gap-1.5 flex-wrap">
-                        {['All', 'AI', 'Conversation', 'GitHub', 'Deploys'].map((f, i) => (
-                            <span key={f} className={`text-[11.5px] rounded-full px-[11px] py-[5px] ${i === 0 ? 'font-semibold text-primary-foreground bg-primary' : 'text-voxly-ink-6 border border-border cursor-pointer hover:border-voxly-ink-4 hover:text-foreground transition-colors'}`}>{f}</span>
-                        ))}
-                    </div>
                 </div>
                 <div className="border border-border rounded-[14px] bg-card overflow-hidden">
-                    {ACTIVITY.map(group => (
-                        <div key={group.group}>
-                            <div className="px-4 py-2 bg-voxly-surface-2 font-mono text-[9.5px] font-bold tracking-[0.07em] text-voxly-ink-5">{group.group}</div>
-                            {group.items.map((item, i) => (
-                                <div key={i} className="flex items-center gap-3 px-4 py-[11px] border-b border-border last:border-b-0 hover:bg-white/[0.02] transition-colors">
-                                    <span className={`w-[3px] h-7 rounded-sm flex-none ${item.bar}`} />
-                                    <span className={`w-7 h-7 rounded-lg bg-voxly-surface-2 flex items-center justify-center flex-none ${item.color}`}>
-                                        <item.icon className="w-3.5 h-3.5" />
+                    {activityGroups.length === 0 ? (
+                        <div className="px-4 py-8 text-center text-xs text-voxly-ink-5">No messages with this client yet.</div>
+                    ) : activityGroups.map(group => (
+                        <div key={group.label}>
+                            <div className="px-4 py-2 bg-voxly-surface-2 font-mono text-[9.5px] font-bold tracking-[0.07em] text-voxly-ink-5">{group.label}</div>
+                            {group.items.map(m => (
+                                <div key={m.id} className="flex items-center gap-3 px-4 py-[11px] border-b border-border last:border-b-0 hover:bg-white/[0.02] transition-colors">
+                                    <span className={`w-[3px] h-7 rounded-sm flex-none ${m.ai_response ? 'bg-voxly-violet' : 'bg-primary'}`} />
+                                    <span className={`w-7 h-7 rounded-lg bg-voxly-surface-2 flex items-center justify-center flex-none ${m.ai_response ? 'text-voxly-violet' : 'text-voxly-ink-6'}`}>
+                                        {m.ai_response ? <Sparkles className="w-3.5 h-3.5" /> : <MessageSquare className="w-3.5 h-3.5" />}
                                     </span>
                                     <div className="flex-1 min-w-0">
-                                        <div className="text-[13px] text-foreground font-medium truncate">{item.title}</div>
-                                        <div className="text-[11.5px] text-voxly-ink-5 truncate">{item.sub}</div>
+                                        <div className="text-[13px] text-foreground font-medium truncate">
+                                            {m.ai_response ? 'Voxly replied' : `${client?.name ?? 'Client'} messaged`}
+                                        </div>
+                                        <div className="text-[11.5px] text-voxly-ink-5 truncate">&quot;{m.ai_response || m.message}&quot;</div>
                                     </div>
-                                    <span className="text-[9.5px] uppercase tracking-wide text-voxly-ink-5 flex-none">{item.tag}</span>
-                                    {item.dot && <span className="w-1.5 h-1.5 rounded-full bg-primary flex-none" />}
-                                    <span className="font-mono text-[11px] text-voxly-ink-5 flex-none w-7 text-right">{item.time}</span>
+                                    <span className="text-[9.5px] uppercase tracking-wide text-voxly-ink-5 flex-none">{m.channel}</span>
+                                    <span className="font-mono text-[11px] text-voxly-ink-5 flex-none w-7 text-right">{timeAgo(m.created_at)}</span>
                                 </div>
                             ))}
                         </div>
@@ -330,18 +367,20 @@ export default function MilestonesPage() {
                     )}
                 </div>
 
+
                 <div className="flex items-center gap-4">
                     <span className="font-display font-semibold text-[15px] text-foreground">Documents</span>
-                    <div className="flex-1" />
-                    <a href="#" className="text-xs">Upload</a>
                 </div>
+                <PreviewBanner>
+                    <b className="font-semibold">Preview.</b> No document storage exists yet — upload and the files below are illustrative of where this is headed.
+                </PreviewBanner>
                 <div className="flex gap-3 flex-wrap">
                     {[
                         { name: 'Statement of Work.pdf', meta: '240 KB' },
                         { name: 'API Specification.md', meta: '18 KB' },
                         { name: 'Brand Guidelines.pdf', meta: '4.1 MB' },
                     ].map(doc => (
-                        <div key={doc.name} className="flex items-center gap-2.5 border border-border rounded-[11px] bg-card px-3.5 py-2.5 w-[220px] hover:bg-voxly-surface-2 transition-colors">
+                        <div key={doc.name} className="flex items-center gap-2.5 border border-border rounded-[11px] bg-card px-3.5 py-2.5 w-[220px] opacity-70">
                             <div className="w-8 h-8 rounded-lg bg-voxly-surface-3 flex items-center justify-center text-voxly-ink-6 flex-none">
                                 <FileText className="w-[15px] h-[15px]" />
                             </div>
@@ -355,12 +394,26 @@ export default function MilestonesPage() {
             </div>
 
             <div className="w-full xl:w-80 flex-none flex flex-col gap-3.5">
-                <Panel title="Health Explanation" badge={<span className="flex items-center gap-1.5"><PreviewBadge /><span className="font-display font-bold text-xs text-voxly-success">{health}</span></span>}>
-                    <PanelRow dot="bg-voxly-success" label="Avg response time" value="1.4s" />
-                    <PanelRow dot="bg-voxly-success" label="Deploy success rate" value="100%" />
-                    <PanelRow dot="bg-voxly-success" label="Client sentiment" value="Positive" />
-                    <PanelRow dot="bg-voxly-warning" label="Task completion" value={`${overallProgress}%`} />
-                    <PanelText>Score blends response time, delivery reliability, sentiment and task completion — weighted toward the last 14 days.</PanelText>
+                {/* Real synced GitHub signal, replacing an invented 0-100
+                    "health" score blending fabricated response time, deploy
+                    rate, and sentiment — none of which exist on the backend. */}
+                <Panel title="Project Signals">
+                    {stats ? (
+                        <>
+                            <PanelRow dot="bg-voxly-success" label="Commits (7d)" value={stats.commits_last_7_days} />
+                            <PanelRow dot="bg-voxly-success" label="Open issues" value={stats.open_issues} />
+                            <PanelRow dot="bg-voxly-success" label="Open PRs" value={stats.pull_requests} />
+                            <PanelRow dot="bg-voxly-warning" label="Milestone progress" value={`${overallProgress}%`} />
+                            {stats.last_commit_date && (
+                                <PanelText>Last commit {formatDate(stats.last_commit_date)}{stats.last_commit_message ? ` — "${stats.last_commit_message}"` : ''}.</PanelText>
+                            )}
+                        </>
+                    ) : (
+                        <>
+                            <PanelRow dot="bg-voxly-ink-4" label="GitHub sync" value={project.github_repo ? 'not synced yet' : 'no repo linked'} />
+                            <PanelRow dot="bg-voxly-warning" label="Milestone progress" value={`${overallProgress}%`} />
+                        </>
+                    )}
                 </Panel>
                 <Panel title="Risks" badge={<span className="text-[10.5px] bg-voxly-warning-soft text-voxly-warning px-[7px] py-[1px] rounded-full">{upcomingMilestones.length > 0 ? 1 : 0}</span>}>
                     {upcomingMilestones.length > 0 ? (
@@ -372,21 +425,23 @@ export default function MilestonesPage() {
                         <PanelText>No active risks flagged.</PanelText>
                     )}
                 </Panel>
-                <Panel title="AI Memory & Context">
-                    <div className="px-3.5 pb-2.5 flex flex-col gap-2">
-                        {['Client prefers async updates over calls', 'Primary contact noted in client profile'].map(m => (
-                            <div key={m} className="flex items-start gap-2">
-                                <span className="w-[5px] h-[5px] rounded-full bg-voxly-violet flex-none mt-[6px]" />
-                                <span className="text-xs text-foreground/90 leading-relaxed">{m}</span>
-                            </div>
-                        ))}
-                    </div>
-                    <PanelText>gpt-4o · context updated recently</PanelText>
+                <Panel title="AI Memory & Context" defaultOpen={false}>
+                    <PanelText>
+                        <span className="inline-flex items-center">No memory/context store exists yet<PreviewMark /></span> — the AI Agent uses live tool calls (project status, GitHub) rather than stored memory of past conversations.
+                    </PanelText>
                 </Panel>
                 <Panel title="Team & Channels" defaultOpen={false}>
-                    <PanelRow dot={project.github_sync_enabled ? 'bg-voxly-success' : 'bg-voxly-ink-4'} label="GitHub" value={project.github_sync_enabled ? 'synced' : 'not connected'} />
-                    <PanelRow dot={client?.phone ? 'bg-voxly-success' : 'bg-voxly-ink-4'} label="WhatsApp" value={client?.phone ? 'connected' : 'not connected'} />
-                    <PanelRow dot={client?.email ? 'bg-voxly-success' : 'bg-voxly-ink-4'} label="Email" value={client?.email ? 'connected' : 'not connected'} />
+                    <PanelRow dot={project.github_repo ? 'bg-voxly-success' : 'bg-voxly-ink-4'} label="GitHub" value={project.github_repo ? (stats ? 'synced' : 'linked, not synced') : 'not linked'} />
+                    <PanelRow
+                        dot={clientChannels.some(c => c.channel === 'whatsapp') ? 'bg-voxly-success' : 'bg-voxly-ink-4'}
+                        label="WhatsApp"
+                        value={clientChannels.some(c => c.channel === 'whatsapp') ? 'active' : client?.phone ? 'no messages yet' : 'not configured'}
+                    />
+                    <PanelRow
+                        dot={clientChannels.some(c => c.channel === 'telegram') ? 'bg-voxly-success' : 'bg-voxly-ink-4'}
+                        label="Telegram"
+                        value={clientChannels.some(c => c.channel === 'telegram') ? 'active' : client?.telegram_chat_id ? 'no messages yet' : 'not configured'}
+                    />
                 </Panel>
                 <Panel title="Upcoming Milestones">
                     {upcomingMilestones.length === 0 ? (

@@ -35,6 +35,9 @@ export interface Project {
     expected_end_date: string | null;
     created_at: string;
     updated_at: string;
+    /** Real synced GitHub stats from the github_cache table. Null when the
+     *  project has no repo or has never synced. */
+    github_stats?: GitHubStats | null;
 }
 
 export interface Milestone {
