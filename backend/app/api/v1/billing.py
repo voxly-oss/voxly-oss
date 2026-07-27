@@ -363,9 +363,20 @@ async def get_usage_stats(*,
     else:
         plan = db.query(Plan).filter(Plan.slug == "free").first()
     
-    # Get actual counts
-    clients_count = db.query(Client).filter(Client.user_id == current_user.id).count()
-    projects_count = db.query(Project).join(Client).filter(Client.user_id == current_user.id).count()
+    # Get actual counts (soft-deleted rows must never count against quota)
+    clients_count = db.query(Client).filter(
+        Client.user_id == current_user.id, Client.deleted_at.is_(None)
+    ).count()
+    projects_count = (
+        db.query(Project)
+        .join(Client)
+        .filter(
+            Client.user_id == current_user.id,
+            Client.deleted_at.is_(None),
+            Project.deleted_at.is_(None),
+        )
+        .count()
+    )
     api_keys_count = db.query(APIKey).filter(
         APIKey.user_id == current_user.id,
         APIKey.is_active == True,
