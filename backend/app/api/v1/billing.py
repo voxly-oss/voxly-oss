@@ -78,9 +78,15 @@ async def create_checkout_session(*,
     db: Annotated[Session , Depends(get_db)],
     current_user: Annotated[User , Depends(get_current_user)],
 ):
-    """Create a checkout session for Stripe or Razorpay."""
-    
-    plan = db.query(Plan).filter(Plan.id == request.plan_id).first()
+    """Create a checkout session for Stripe or Razorpay.
+
+    `request` is the starlette Request (slowapi's rate-limit wrapper resolves it
+    by that exact name); the parsed body is `payload`. Reading `plan_id` off
+    `request` raised AttributeError on every call, so this endpoint returned 500
+    unconditionally and no upgrade could ever complete.
+    """
+
+    plan = db.query(Plan).filter(Plan.id == payload.plan_id).first()
     if not plan:
         raise HTTPException(status_code=404, detail="Plan not found")
     
