@@ -82,7 +82,11 @@ class DashboardStatsResponse(BaseModel):
 
 
 def _get_user_client_ids(db: Session, user_id) -> List:
-    return [c.id for c in db.query(Client.id).filter(Client.user_id == user_id).all()]
+    return [
+        c.id for c in db.query(Client.id)
+        .filter(Client.user_id == user_id, Client.deleted_at.is_(None))
+        .all()
+    ]
 
 
 def _now_utc() -> datetime:
@@ -116,7 +120,9 @@ def _get_project_stats(db: Session, user_client_ids: List) -> tuple[int, int, in
     if not user_client_ids:
         return 0, 0, 0
 
-    project_query = db.query(Project).filter(Project.client_id.in_(user_client_ids))
+    project_query = db.query(Project).filter(
+        Project.client_id.in_(user_client_ids), Project.deleted_at.is_(None)
+    )
     return (
         project_query.count(),
         project_query.filter(Project.status == "active").count(),
@@ -166,12 +172,18 @@ def _get_client_delta(db: Session, user_id) -> int:
     prev_start, prev_end = _month_range(-1)
     this_month = (
         db.query(func.count(Client.id))
-        .filter(Client.user_id == user_id, Client.created_at >= cur_start, Client.created_at < cur_end)
+        .filter(
+            Client.user_id == user_id, Client.deleted_at.is_(None),
+            Client.created_at >= cur_start, Client.created_at < cur_end,
+        )
         .scalar()
     ) or 0
     last_month = (
         db.query(func.count(Client.id))
-        .filter(Client.user_id == user_id, Client.created_at >= prev_start, Client.created_at < prev_end)
+        .filter(
+            Client.user_id == user_id, Client.deleted_at.is_(None),
+            Client.created_at >= prev_start, Client.created_at < prev_end,
+        )
         .scalar()
     ) or 0
     return this_month - last_month
@@ -184,12 +196,18 @@ def _get_project_delta(db: Session, user_client_ids: List) -> int:
     prev_start, prev_end = _month_range(-1)
     this_month = (
         db.query(func.count(Project.id))
-        .filter(Project.client_id.in_(user_client_ids), Project.created_at >= cur_start, Project.created_at < cur_end)
+        .filter(
+            Project.client_id.in_(user_client_ids), Project.deleted_at.is_(None),
+            Project.created_at >= cur_start, Project.created_at < cur_end,
+        )
         .scalar()
     ) or 0
     last_month = (
         db.query(func.count(Project.id))
-        .filter(Project.client_id.in_(user_client_ids), Project.created_at >= prev_start, Project.created_at < prev_end)
+        .filter(
+            Project.client_id.in_(user_client_ids), Project.deleted_at.is_(None),
+            Project.created_at >= prev_start, Project.created_at < prev_end,
+        )
         .scalar()
     ) or 0
     return this_month - last_month
@@ -252,7 +270,7 @@ def _build_recent_activity(
     if user_client_ids:
         recent_projects = (
             db.query(Project)
-            .filter(Project.client_id.in_(user_client_ids))
+            .filter(Project.client_id.in_(user_client_ids), Project.deleted_at.is_(None))
             .order_by(Project.created_at.desc())
             .limit(3)
             .all()
@@ -335,8 +353,10 @@ async def get_dashboard_stats(*,
     """
     user_id = current_user.id
 
-    # ── Client stats ──
-    client_query = db.query(Client).filter(Client.user_id == user_id)
+    # ── Client stats (soft-deleted clients must never count) ──
+    client_query = db.query(Client).filter(
+        Client.user_id == user_id, Client.deleted_at.is_(None)
+    )
     total_clients = client_query.count()
     active_clients = client_query.filter(Client.is_active == True).count()  # noqa: E712
 

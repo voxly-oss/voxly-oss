@@ -36,7 +36,8 @@ from app.utils.auth import (
     create_access_token,
     get_current_user,
     create_reset_token,
-    verify_reset_token,
+    decode_reset_token,
+    verify_reset_token_fingerprint,
 )
 from app.utils.tenant_context import resolve_tenant_context
 from app.rate_limit import limiter
@@ -202,7 +203,7 @@ async def google_auth(*,
     # Create JWT
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": str(user.id), "email": user.email},
+        data={"sub": str(user.id), "email": user.email, "tv": user.token_version or 0},
         expires_delta=access_token_expires,
     )
 
@@ -249,7 +250,8 @@ async def github_redirect(*, request: Request):
         403: {"description": USER_ACCOUNT_DEACTIVATED},
     },
 )
-async def github_callback(*, 
+@limiter.limit("10/minute")
+async def github_callback(*,
     request: Request,
     code: str,
     state: str,
@@ -346,7 +348,7 @@ async def github_callback(*,
 
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": str(user.id), "email": user.email},
+        data={"sub": str(user.id), "email": user.email, "tv": user.token_version or 0},
         expires_delta=access_token_expires,
     )
     response = JSONResponse(
@@ -437,21 +439,23 @@ async def login(*,
     # Create access token
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": str(user.id), "email": user.email},
+        data={"sub": str(user.id), "email": user.email, "tv": user.token_version or 0},
         expires_delta=access_token_expires
     )
-    
+
     return Token(access_token=access_token, token_type="bearer")
 
 
 @router.post("/refresh", response_model=Token)
-async def refresh_token(*, 
+@limiter.limit("20/minute")
+async def refresh_token(*,
+    request: Request,
     current_user: Annotated[User , Depends(get_current_user)],
 ):
     """Refresh the access token."""
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": str(current_user.id), "email": current_user.email},
+        data={"sub": str(current_user.id), "email": current_user.email, "tv": current_user.token_version or 0},
         expires_delta=access_token_expires
     )
     
@@ -566,6 +570,9 @@ async def change_password(*,
         )
 
     current_user.password_hash = get_password_hash(password_data.new_password)
+    # Bump so every JWT issued before this moment stops authenticating --
+    # otherwise a token stolen before the change survives it indefinitely.
+    current_user.token_version = (current_user.token_version or 0) + 1
 
     try:
         db.commit()
@@ -598,7 +605,7 @@ async def request_password_reset(*,
     if not user:
         return {"message": "If that email exists, a reset link has been sent."}
     
-    token = create_reset_token(user.email)
+    token = create_reset_token(user.email, user.password_hash)
     reset_link = f"{settings.FRONTEND_URL}/reset-password?token={token}"
     
     # Send email asynchronously
@@ -612,27 +619,43 @@ async def request_password_reset(*,
 
 
 @router.post("/password-reset/confirm", status_code=status.HTTP_200_OK)
-async def confirm_password_reset(*, 
+@limiter.limit("5/minute")
+async def confirm_password_reset(*,
+    request: Request,
     confirm_data: PasswordResetConfirm,
     db: Annotated[Session , Depends(get_db)],
 ):
-    """Validate token and update password."""
-    email = verify_reset_token(confirm_data.token)
-    if not email:
+    """Validate token and update password. The token is single-use: it's
+    bound to a fingerprint of the password hash it was issued against, so
+    once redeemed (or if the password changed any other way since) the same
+    token fails verification on replay."""
+    payload = decode_reset_token(confirm_data.token)
+    if not payload:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired reset token"
         )
-    
+
+    email = payload.get("sub")
     user = db.query(User).filter(User.email == email).first()
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found"
         )
-    
+
+    if not verify_reset_token_fingerprint(payload, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset token"
+        )
+
     user.password_hash = get_password_hash(confirm_data.new_password)
-    
+    # Same reasoning as change-password: a lost-password event is exactly
+    # when existing sessions should stop being trusted, not just the reset
+    # token itself.
+    user.token_version = (user.token_version or 0) + 1
+
     try:
         db.commit()
     except Exception:
@@ -641,7 +664,7 @@ async def confirm_password_reset(*,
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to reset password"
         )
-    
+
     return {"message": "Password has been reset successfully"}
 
 

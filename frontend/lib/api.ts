@@ -168,14 +168,45 @@ export const milestonesAPI = {
     delete: (id: string) => api.delete(`/api/v1/milestones/${id}`),
 };
 
-// ─── Chat API ───
+// ─── Chat / Conversations API ───
+// A "conversation" is a client's thread — `clientId` IS the conversation id,
+// matching the backend model and the WebSocket `conversation_id` field.
+// `GET /api/v1/chat/messages` (message-level feed) intentionally has no client
+// here: the Conversation Center now uses `conversations()`, which groups
+// server-side so a client's older messages can't fall off the page and take
+// the whole conversation with them. The endpoint still exists for API
+// consumers; add a wrapper back if a UI ever needs a flat message feed.
 export const chatAPI = {
-    /** Get paginated messages across all user clients */
-    allMessages: (params?: { skip?: number; limit?: number }) =>
-        api.get('/api/v1/chat/messages', { params }),
-    /** Get chat history for a specific client */
+    /** Conversation-level list: one row per client, real server-side search,
+     *  status filtering, and pagination over conversations (not messages). */
+    conversations: (params?: {
+        search?: string;
+        status?: string;
+        skip?: number;
+        limit?: number;
+    }) => api.get('/api/v1/chat/conversations', { params }),
+    /** Full message thread for one conversation, plus its real backend status
+     *  and the linked project's synced GitHub stats. */
     clientHistory: (clientId: string, limit?: number) =>
         api.get(`/api/v1/chat/history/${clientId}`, { params: { limit: limit ?? 50 } }),
+    /** Current backend-computed state. 404s when no message has ever been
+     *  processed for this client — that's "no state yet", not an error. */
+    conversationStatus: (clientId: string) =>
+        api.get(`/api/v1/chat/conversations/${clientId}/status`),
+    /** Manual state transition (human takeover, approval, escalation).
+     *  Broadcasts conversation.state_changed to every connected dashboard. */
+    setConversationStatus: (clientId: string, status: string) =>
+        api.patch(`/api/v1/chat/conversations/${clientId}/status`, { status }),
+};
+
+// ─── Channels API ───
+// Read-only aggregate over chat_history. Returns one row per (client, channel)
+// that has at least one real message — so a client with a phone number but no
+// conversation yet correctly does not appear. Only "whatsapp" and "telegram"
+// are ever returned; email is a one-way notification channel with no persisted
+// conversation history to aggregate.
+export const channelsAPI = {
+    list: () => api.get('/api/v1/channels'),
 };
 
 // ─── Dashboard API ───

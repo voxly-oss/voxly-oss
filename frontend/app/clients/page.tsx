@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { clientsAPI, projectsAPI } from '@/lib/api';
+import { clientsAPI, projectsAPI, channelsAPI } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import {
     Dialog,
@@ -23,13 +23,13 @@ import { useToast } from '@/hooks/use-toast';
 import { Plus, Search, MoreVertical, Pencil, Trash2, Users, Loader2, Filter, ChevronLeft, ChevronRight } from 'lucide-react';
 import Link from 'next/link';
 import { formatPhone, getInitials } from '@/lib/utils';
-import type { Client, Project } from '@/types';
+import type { Client, Project, ChannelActivity } from '@/types';
 import { motion, AnimatePresence } from 'framer-motion';
 import EmptyState from '@/components/EmptyState';
 import PreviewBadge, { PreviewMark } from '@/components/PreviewBadge';
 
 const PAGE_SIZE = 6;
-const CHANNEL_TYPES = ['WhatsApp', 'Email', 'Telegram'] as const;
+const CHANNEL_TYPES = ['WhatsApp', 'Telegram'] as const;
 
 // Deterministic placeholder — no client health-scoring or MRR/billing endpoint
 // exists yet. Stable per client id (not randomized per render) so the score
@@ -59,12 +59,14 @@ function bucketOf(client: Client, health: number): Bucket {
     return 'risk';
 }
 
-function channelsOf(client: Client) {
-    const list: string[] = [];
-    if (client.phone) list.push('WhatsApp');
-    if (client.email) list.push('Email');
-    if (client.telegram_chat_id) list.push('Telegram');
-    return list;
+/* "Email" no longer appears here — chat_history.channel is constrained to
+   whatsapp/telegram, so it's never a real conversation channel (see
+   backend/app/schemas/channel.py). Real activity, from GET /channels, replaces
+   inferring a channel from whether a contact field is merely populated. */
+function channelsOf(clientId: string, activityByClient: Map<string, Set<string>>) {
+    const active = activityByClient.get(clientId);
+    if (!active) return [];
+    return Array.from(active).map(ch => ch === 'whatsapp' ? 'WhatsApp' : ch === 'telegram' ? 'Telegram' : ch);
 }
 
 const timeAgo = (ts: string) => {
@@ -112,6 +114,12 @@ export default function ClientsListPage() {
         queryFn: async () => (await projectsAPI.list()).data as Project[],
     });
 
+    const { data: channelActivity = [] } = useQuery({
+        queryKey: ['channel-activity'],
+        queryFn: async () => (await channelsAPI.list()).data as ChannelActivity[],
+        staleTime: 30_000,
+    });
+
     const deleteMutation = useMutation({
         mutationFn: (id: string) => clientsAPI.delete(id),
         onSuccess: () => {
@@ -131,6 +139,16 @@ export default function ClientsListPage() {
         return map;
     }, [projects]);
 
+    const activityByClient = useMemo(() => {
+        const map = new Map<string, Set<string>>();
+        for (const a of channelActivity) {
+            const set = map.get(a.client_id) ?? new Set<string>();
+            set.add(a.channel);
+            map.set(a.client_id, set);
+        }
+        return map;
+    }, [channelActivity]);
+
     const enriched = useMemo(() => clients.map(c => {
         const health = mockHealth(c.id);
         return {
@@ -138,10 +156,10 @@ export default function ClientsListPage() {
             health,
             bucket: bucketOf(c, health),
             mrr: mockMRR(c.id),
-            channels: channelsOf(c),
+            channels: channelsOf(c.id, activityByClient),
             projectCount: projectCountByClient.get(c.id) ?? 0,
         };
-    }), [clients, projectCountByClient]);
+    }), [clients, projectCountByClient, activityByClient]);
 
     const activeCount = clients.filter(c => c.is_active).length;
     const inactiveCount = clients.length - activeCount;

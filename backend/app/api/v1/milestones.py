@@ -11,11 +11,19 @@ from app.models.client import Client
 from app.models.project import Project
 from app.models.milestone import Milestone
 from app.schemas.milestone import MilestoneCreate, MilestoneUpdate, MilestoneResponse
-from app.utils.auth import get_current_user
-from app.utils.tenant_context import TenantContext, get_tenant_context, shadow_verify_read
+from app.utils.api_key_auth import get_current_user_or_api_key
+from app.utils.tenant_context import TenantContext, get_tenant_context_dual, shadow_verify_read
 
 router = APIRouter()
 MILESTONE_NOT_FOUND = "Milestone not found"
+MAX_LIST_LIMIT = 100
+
+
+def _clamp_pagination(skip: int, limit: int) -> tuple[int, int]:
+    """Postgres raises InvalidRowCountInResultOffsetClause on a negative
+    OFFSET/LIMIT (500); SQLite silently tolerates it, which is why this was
+    invisible until it hit production. Clamp before it reaches the query."""
+    return max(skip, 0), min(max(limit, 1), MAX_LIST_LIMIT)
 
 
 def get_user_project_ids(db: Session, user_id: UUID) -> List[UUID]:
@@ -88,10 +96,11 @@ async def list_milestones(*,
     skip: int = 0,
     limit: int = 100,
     db: Annotated[Session , Depends(get_db)],
-    current_user: Annotated[User , Depends(get_current_user)],
-    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    current_user: Annotated[User , Depends(get_current_user_or_api_key)],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context_dual)],
 ):
     """List all milestones for the current user's projects."""
+    skip, limit = _clamp_pagination(skip, limit)
     user_project_ids = get_user_project_ids(db, current_user.id)
 
     query = db.query(Milestone).filter(
@@ -121,7 +130,7 @@ async def list_milestones(*,
 async def create_milestone(*, 
     milestone_data: MilestoneCreate,
     db: Annotated[Session , Depends(get_db)],
-    current_user: Annotated[User , Depends(get_current_user)],
+    current_user: Annotated[User , Depends(get_current_user_or_api_key)],
 ):
     """Create a new milestone."""
     user_project_ids = get_user_project_ids(db, current_user.id)
@@ -160,7 +169,7 @@ async def create_milestone(*,
 async def get_milestone(*, 
     milestone_id: UUID,
     db: Annotated[Session , Depends(get_db)],
-    current_user: Annotated[User , Depends(get_current_user)],
+    current_user: Annotated[User , Depends(get_current_user_or_api_key)],
 ):
     """Get a specific milestone by ID."""
     user_project_ids = get_user_project_ids(db, current_user.id)
@@ -190,7 +199,7 @@ async def update_milestone(*,
     milestone_data: MilestoneUpdate,
     background_tasks: BackgroundTasks,
     db: Annotated[Session , Depends(get_db)],
-    current_user: Annotated[User , Depends(get_current_user)],
+    current_user: Annotated[User , Depends(get_current_user_or_api_key)],
 ):
     """Update a milestone."""
     user_project_ids = get_user_project_ids(db, current_user.id)
@@ -245,7 +254,7 @@ async def update_milestone(*,
 async def delete_milestone(*, 
     milestone_id: UUID,
     db: Annotated[Session , Depends(get_db)],
-    current_user: Annotated[User , Depends(get_current_user)],
+    current_user: Annotated[User , Depends(get_current_user_or_api_key)],
 ):
     """Delete a milestone (soft delete)."""
     user_project_ids = get_user_project_ids(db, current_user.id)

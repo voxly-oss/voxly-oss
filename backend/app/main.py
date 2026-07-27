@@ -61,7 +61,14 @@ async def security_headers_middleware(request: Request, call_next):
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Content-Security-Policy"] = "default-src 'self'; frame-ancestors 'none'"
     response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
-    if request.url.scheme == "https":
+    # Cloud Run terminates TLS at its own proxy and forwards the request to
+    # this container over plain HTTP, so request.url.scheme is always "http"
+    # here even for a real https:// client request. Trust the proxy's own
+    # X-Forwarded-Proto header (Cloud Run always sets it) as a fallback, or
+    # HSTS silently never fires in production.
+    forwarded_proto = request.headers.get("x-forwarded-proto", "")
+    is_https = request.url.scheme == "https" or forwarded_proto.lower() == "https"
+    if is_https:
         response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains; preload"
     return response
 

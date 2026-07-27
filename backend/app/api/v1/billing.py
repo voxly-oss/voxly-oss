@@ -78,9 +78,15 @@ async def create_checkout_session(*,
     db: Annotated[Session , Depends(get_db)],
     current_user: Annotated[User , Depends(get_current_user)],
 ):
-    """Create a checkout session for Stripe or Razorpay."""
-    
-    plan = db.query(Plan).filter(Plan.id == request.plan_id).first()
+    """Create a checkout session for Stripe or Razorpay.
+
+    `request` is the starlette Request (slowapi's rate-limit wrapper resolves it
+    by that exact name); the parsed body is `payload`. Reading `plan_id` off
+    `request` raised AttributeError on every call, so this endpoint returned 500
+    unconditionally and no upgrade could ever complete.
+    """
+
+    plan = db.query(Plan).filter(Plan.id == payload.plan_id).first()
     if not plan:
         raise HTTPException(status_code=404, detail="Plan not found")
     
@@ -357,9 +363,20 @@ async def get_usage_stats(*,
     else:
         plan = db.query(Plan).filter(Plan.slug == "free").first()
     
-    # Get actual counts
-    clients_count = db.query(Client).filter(Client.user_id == current_user.id).count()
-    projects_count = db.query(Project).join(Client).filter(Client.user_id == current_user.id).count()
+    # Get actual counts (soft-deleted rows must never count against quota)
+    clients_count = db.query(Client).filter(
+        Client.user_id == current_user.id, Client.deleted_at.is_(None)
+    ).count()
+    projects_count = (
+        db.query(Project)
+        .join(Client)
+        .filter(
+            Client.user_id == current_user.id,
+            Client.deleted_at.is_(None),
+            Project.deleted_at.is_(None),
+        )
+        .count()
+    )
     api_keys_count = db.query(APIKey).filter(
         APIKey.user_id == current_user.id,
         APIKey.is_active == True,

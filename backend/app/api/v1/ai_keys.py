@@ -12,7 +12,7 @@ from typing import Annotated, List, Optional
 from uuid import UUID
 import hashlib
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from cryptography.fernet import Fernet, InvalidToken
@@ -22,6 +22,7 @@ from app.models.user import User
 from app.models.user_ai_key import UserAIKey
 from app.api.v1.auth import get_current_user
 from app.utils.tenant_context import TenantContext, get_tenant_context, shadow_verify_read
+from app.rate_limit import limiter
 
 logger = logging.getLogger(__name__)
 
@@ -326,7 +327,9 @@ async def delete_ai_key(*,
     "/{key_id}/validate",
     responses={404: {"description": "AI key not found"}},
 )
-async def validate_ai_key(*, 
+@limiter.limit("10/minute")
+async def validate_ai_key(*,
+    request: Request,
     key_id: UUID,
     current_user: Annotated[User , Depends(get_current_user)],
     db: Annotated[Session , Depends(get_db)],

@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { projectsAPI, clientsAPI } from '@/lib/api';
+import { projectsAPI, clientsAPI, channelsAPI } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import {
     DropdownMenu,
@@ -11,40 +11,21 @@ import {
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
-    FolderGit2, Loader2, MoreVertical, Plus, Search, Filter, Sparkles,
-    AlertTriangle, Clock, ChevronLeft, ChevronRight,
+    FolderGit2, Loader2, MoreVertical, Plus, Search, Filter,
+    AlertTriangle, Clock, ChevronLeft, ChevronRight, Code2, GitCommit,
 } from 'lucide-react';
 import Link from 'next/link';
 import { getInitials } from '@/lib/utils';
-import type { Project, Client } from '@/types';
+import type { Project, Client, ChannelActivity } from '@/types';
 import { motion, AnimatePresence } from 'framer-motion';
-import PreviewBadge, { PreviewMark } from '@/components/PreviewBadge';
 import EmptyState from '@/components/EmptyState';
 
 const PAGE_SIZE = 7;
-const AGENTS = ['Support Agent', 'Deploy Agent', 'Triage Agent'] as const;
 const STATUS_FILTERS = ['All', 'Active', 'Paused', 'Completed', 'Cancelled'] as const;
 
-// Deterministic placeholder — no health-scoring or AI-agent-assignment
-// endpoint exists on projects yet. Stable per project id so it stays
-// consistent across the table, filters, and side panels.
-function hashOf(s: string) {
-    let h = 2166136261;
-    for (let i = 0; i < s.length; i++) {
-        h ^= s.charCodeAt(i);
-        h = Math.imul(h, 16777619);
-    }
-    return h >>> 0;
-}
-const mockHealth = (id: string) => {
-    const h = hashOf(id);
-    return (h % 100) < 85 ? 75 + (Math.floor(h / 100) % 26) : 40 + (Math.floor(h / 100) % 35);
-};
-const mockAgent = (id: string): typeof AGENTS[number] | null => {
-    const h = hashOf(`${id}-agent`);
-    if (h % 10 < 2) return null;
-    return AGENTS[h % AGENTS.length];
-};
+/* Channel labels match what the backend can actually report. chat_history.channel
+   is constrained to whatsapp/telegram, plus GitHub as a project-level link. */
+const CHANNEL_FILTERS = ['GitHub', 'WhatsApp', 'Telegram'] as const;
 
 const STATUS_STYLE: Record<string, { bg: string; text: string; dot: string; label: string }> = {
     active: { bg: 'bg-voxly-success-soft', text: 'text-voxly-success', dot: 'bg-voxly-success', label: 'Active' },
@@ -54,8 +35,7 @@ const STATUS_STYLE: Record<string, { bg: string; text: string; dot: string; labe
 };
 
 const timeAgo = (ts: string) => {
-    const d = Date.now() - new Date(ts).getTime();
-    const m = Math.floor(d / 60000);
+    const m = Math.floor((Date.now() - new Date(ts).getTime()) / 60000);
     if (m < 1) return 'just now';
     if (m < 60) return `${m}m ago`;
     const h = Math.floor(m / 60);
@@ -78,12 +58,11 @@ function Panel({ title, badge, defaultOpen = true, children }: { title: string; 
     );
 }
 
-const GRID_COLS = 'grid grid-cols-[2fr_1.2fr_1.3fr_1.3fr_1.1fr_0.85fr_28px]';
+const GRID_COLS = 'grid grid-cols-[2fr_1.2fr_1.2fr_1.2fr_1.1fr_0.85fr_28px]';
 
 export default function ProjectsListPage() {
     const [searchQuery, setSearchQuery] = useState('');
     const [statusFilter, setStatusFilter] = useState<typeof STATUS_FILTERS[number]>('All');
-    const [agentFilter, setAgentFilter] = useState<Set<string>>(new Set());
     const [channelFilter, setChannelFilter] = useState<Set<string>>(new Set());
     const [page, setPage] = useState(1);
 
@@ -97,19 +76,35 @@ export default function ProjectsListPage() {
         queryFn: async () => (await clientsAPI.list()).data as Client[],
     });
 
+    // Real per-client conversation channels, so "WhatsApp" on a row means
+    // messages have actually been exchanged — not that a phone number is on file.
+    const { data: channelActivity = [] } = useQuery({
+        queryKey: ['channel-activity'],
+        queryFn: async () => (await channelsAPI.list()).data as ChannelActivity[],
+        staleTime: 30_000,
+    });
+
     const clientById = useMemo(() => new Map(clients.map(c => [c.id, c])), [clients]);
     const getClientName = (clientId: string) => clientById.get(clientId)?.name || 'Unknown Client';
 
+    const channelsByClient = useMemo(() => {
+        const map = new Map<string, Set<string>>();
+        for (const a of channelActivity) {
+            const set = map.get(a.client_id) ?? new Set<string>();
+            set.add(a.channel === 'whatsapp' ? 'WhatsApp' : a.channel === 'telegram' ? 'Telegram' : a.channel);
+            map.set(a.client_id, set);
+        }
+        return map;
+    }, [channelActivity]);
+
     const enriched = useMemo(() => projects.map(p => {
-        const client = clientById.get(p.client_id);
+        const live = channelsByClient.get(p.client_id);
         const channels = [
             ...(p.github_repo ? ['GitHub'] : []),
-            ...(client?.phone ? ['WhatsApp'] : []),
-            ...(client?.email ? ['Email'] : []),
-            ...(client?.telegram_chat_id ? ['Telegram'] : []),
+            ...(live ? Array.from(live) : []),
         ];
-        return { project: p, health: mockHealth(p.id), agent: mockAgent(p.id), channels };
-    }), [projects, clientById]);
+        return { project: p, stats: p.github_stats ?? null, channels };
+    }), [projects, channelsByClient]);
 
     const totalCount = projects.length;
     const activeCount = projects.filter(p => p.status === 'active').length;
@@ -121,13 +116,12 @@ export default function ProjectsListPage() {
         return u.getFullYear() === now.getFullYear() && u.getMonth() === now.getMonth();
     }).length;
 
-    const filtered = enriched.filter(({ project, agent, channels }) => {
+    const filtered = enriched.filter(({ project, channels }) => {
         const matchesSearch = project.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
             getClientName(project.client_id).toLowerCase().includes(searchQuery.toLowerCase());
         const matchesStatus = statusFilter === 'All' || project.status === statusFilter.toLowerCase();
-        const matchesAgent = agentFilter.size === 0 || (agent ? agentFilter.has(agent) : agentFilter.has('Unassigned'));
         const matchesChannel = channelFilter.size === 0 || channels.some(ch => channelFilter.has(ch));
-        return matchesSearch && matchesStatus && matchesAgent && matchesChannel;
+        return matchesSearch && matchesStatus && matchesChannel;
     });
 
     const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
@@ -135,13 +129,15 @@ export default function ProjectsListPage() {
     const paged = filtered.slice((pageClamped - 1) * PAGE_SIZE, pageClamped * PAGE_SIZE);
     const resetToFirstPage = () => setPage(1);
 
-    const healthBuckets = {
-        excellent: enriched.filter(e => e.project.status !== 'cancelled' && e.health >= 90).length,
-        good: enriched.filter(e => e.project.status !== 'cancelled' && e.health >= 75 && e.health < 90).length,
-        risk: enriched.filter(e => e.project.status !== 'cancelled' && e.health < 75).length,
-    };
-    const agentCounts = AGENTS.map(a => ({ label: a, count: enriched.filter(e => e.agent === a).length }));
-    const unassignedCount = enriched.filter(e => !e.agent).length;
+    /* Real GitHub sync state, from the github_cache rows already carried on
+       every ProjectResponse. This replaces an invented per-project "health"
+       score — there is no health-scoring endpoint, but there is real sync data
+       the page was throwing away. */
+    const withRepo = enriched.filter(e => !!e.project.github_repo);
+    const synced = withRepo.filter(e => e.stats?.synced_at);
+    const commitsLast7 = synced.reduce((n, e) => n + (e.stats?.commits_last_7_days ?? 0), 0);
+    const openIssues = synced.reduce((n, e) => n + (e.stats?.open_issues ?? 0), 0);
+    const openPRs = synced.reduce((n, e) => n + (e.stats?.pull_requests ?? 0), 0);
 
     const upcoming = [...projects]
         .filter(p => p.expected_end_date && p.status !== 'completed' && p.status !== 'cancelled')
@@ -222,36 +218,11 @@ export default function ProjectsListPage() {
                     <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                             <button className="flex items-center gap-1.5 text-[11.5px] text-voxly-ink-6 border border-border hover:border-voxly-ink-4 hover:text-foreground rounded-lg px-[11px] py-[5px] transition-colors">
-                                <Sparkles className="w-[13px] h-[13px]" /> Agent
-                            </button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="bg-popover border-border">
-                            {[...AGENTS, 'Unassigned'].map(a => (
-                                <DropdownMenuCheckboxItem
-                                    key={a}
-                                    checked={agentFilter.has(a)}
-                                    onCheckedChange={(checked) => {
-                                        setAgentFilter(prev => {
-                                            const next = new Set(prev);
-                                            if (checked) next.add(a); else next.delete(a);
-                                            return next;
-                                        });
-                                        resetToFirstPage();
-                                    }}
-                                >
-                                    {a}
-                                </DropdownMenuCheckboxItem>
-                            ))}
-                        </DropdownMenuContent>
-                    </DropdownMenu>
-                    <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                            <button className="flex items-center gap-1.5 text-[11.5px] text-voxly-ink-6 border border-border hover:border-voxly-ink-4 hover:text-foreground rounded-lg px-[11px] py-[5px] transition-colors">
                                 <Filter className="w-[13px] h-[13px]" /> Channel
                             </button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className="bg-popover border-border">
-                            {['GitHub', 'WhatsApp', 'Email', 'Telegram'].map(ch => (
+                            {CHANNEL_FILTERS.map(ch => (
                                 <DropdownMenuCheckboxItem
                                     key={ch}
                                     checked={channelFilter.has(ch)}
@@ -280,7 +251,7 @@ export default function ProjectsListPage() {
                         <div className="p-12 text-center">
                             <Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" />
                         </div>
-                    ) : filtered.length === 0 && (searchQuery || statusFilter !== 'All' || agentFilter.size > 0 || channelFilter.size > 0) ? (
+                    ) : filtered.length === 0 && (searchQuery || statusFilter !== 'All' || channelFilter.size > 0) ? (
                         <div className="p-12 text-center">
                             <div className="w-14 h-14 rounded-2xl bg-secondary border border-border flex items-center justify-center mx-auto mb-4">
                                 <FolderGit2 className="w-6 h-6 text-voxly-ink-5" />
@@ -294,10 +265,10 @@ export default function ProjectsListPage() {
                         <div className="overflow-x-auto">
                         <div className="min-w-[820px]">
                             <div className={`${GRID_COLS} px-4 py-2.5 font-mono text-[10px] font-semibold tracking-[0.04em] uppercase text-voxly-ink-5 border-b border-border`}>
-                                <div>Project</div><div>Client</div><div>Status</div><div>AI Agent<PreviewMark /></div><div>Channels</div><div>Due</div><div />
+                                <div>Project</div><div>Client</div><div>Status</div><div>Progress</div><div>Channels</div><div>Due</div><div />
                             </div>
                             <AnimatePresence>
-                                {paged.map(({ project, health, agent, channels }, index) => {
+                                {paged.map(({ project, stats, channels }, index) => {
                                     const style = STATUS_STYLE[project.status] ?? STATUS_STYLE.active;
                                     const overdue = project.status === 'active' && project.expected_end_date && new Date(project.expected_end_date) < now;
                                     return (
@@ -322,21 +293,24 @@ export default function ProjectsListPage() {
                                                 </div>
                                                 <span className="text-[12.5px] text-foreground/90 truncate">{getClientName(project.client_id)}</span>
                                             </div>
-                                            <div className="flex flex-col gap-[3px] items-start">
+                                            <div>
                                                 <span className={`inline-flex items-center gap-[5px] text-[11px] font-semibold rounded-full pl-1.5 pr-2 py-[3px] whitespace-nowrap ${style.bg} ${style.text}`}>
                                                     <span className={`w-[5px] h-[5px] rounded-full flex-none ${style.dot}`} />
                                                     {style.label}
                                                 </span>
-                                                {project.status !== 'cancelled' && <span className="text-[9.5px] text-voxly-ink-5 pl-0.5 inline-flex items-center">Health {health}<PreviewMark /></span>}
                                             </div>
+                                            {/* Real synced GitHub progress. "—" when the project has no
+                                                repo or has never synced, rather than a stand-in number. */}
                                             <div className="min-w-0">
-                                                {agent ? (
-                                                    <span className="inline-flex items-center gap-[5px] text-[10.5px] text-voxly-ink-6 border border-voxly-violet/30 rounded-[5px] pl-1.5 pr-[7px] py-[2px] whitespace-nowrap">
-                                                        <Sparkles className="w-2.5 h-2.5 text-voxly-violet flex-none" />
-                                                        {agent.replace(' Agent', '')}
-                                                    </span>
+                                                {stats ? (
+                                                    <div className="flex items-center gap-2">
+                                                        <div className="flex-1 h-1 rounded-full bg-voxly-surface-3 overflow-hidden min-w-[36px]">
+                                                            <div className="h-full rounded-full bg-primary" style={{ width: `${Math.min(stats.progress_percent, 100)}%` }} />
+                                                        </div>
+                                                        <span className="text-[11px] text-voxly-ink-6 tabular-nums flex-none">{stats.progress_percent}%</span>
+                                                    </div>
                                                 ) : (
-                                                    <span className="text-[10.5px] text-voxly-ink-5">—</span>
+                                                    <span className="text-[10.5px] text-voxly-ink-5" title={project.github_repo ? 'Repo not synced yet' : 'No repository linked'}>—</span>
                                                 )}
                                             </div>
                                             <div className="flex gap-[5px] flex-wrap">
@@ -390,12 +364,12 @@ export default function ProjectsListPage() {
 
             {/* Right column */}
             <div className="w-full xl:w-80 flex-none flex flex-col gap-3.5">
-                <Panel title="Health Distribution" badge={<PreviewBadge />}>
+                <Panel title="Delivery Status">
                     <div className="px-3.5 pb-3.5 flex flex-col gap-[9px]">
                         {[
-                            { label: 'Excellent (90+)', dot: 'bg-voxly-success', count: healthBuckets.excellent },
-                            { label: 'Good (75-89)', dot: 'bg-voxly-success', count: healthBuckets.good },
-                            { label: 'At risk (<75)', dot: 'bg-voxly-warning', count: healthBuckets.risk },
+                            { label: 'Active', dot: 'bg-voxly-success', count: activeCount },
+                            { label: 'Paused', dot: 'bg-voxly-warning', count: projects.filter(p => p.status === 'paused').length },
+                            { label: 'Completed', dot: 'bg-voxly-violet', count: projects.filter(p => p.status === 'completed').length },
                             { label: 'Cancelled', dot: 'bg-voxly-heat', count: cancelledCount },
                         ].map(row => (
                             <div key={row.label} className="flex items-center gap-2">
@@ -407,20 +381,39 @@ export default function ProjectsListPage() {
                     </div>
                 </Panel>
 
-                <Panel title="By AI Agent" badge={<PreviewBadge />}>
+                {/* Real github_cache aggregates — the data behind the Progress column. */}
+                <Panel title="GitHub Sync">
                     <div className="pb-1">
-                        {agentCounts.map(a => (
-                            <div key={a.label} className="flex items-center gap-2 px-3 py-[7px] border-t border-border">
-                                <Sparkles className="w-3 h-3 text-voxly-violet flex-none" />
-                                <span className="flex-1 text-xs text-foreground truncate">{a.label}</span>
-                                <span className="text-xs text-voxly-ink-6">{a.count}</span>
-                            </div>
-                        ))}
+                        <div className="flex items-center gap-2 px-3 py-[7px] border-t border-border">
+                            <Code2 className="w-3 h-3 text-voxly-ink-5 flex-none" />
+                            <span className="flex-1 text-xs text-voxly-ink-6">Repos linked</span>
+                            <span className="text-xs font-semibold text-foreground">{withRepo.length}</span>
+                        </div>
                         <div className="flex items-center gap-2 px-3 py-[7px] border-t border-border">
                             <span className="w-3 flex-none" />
-                            <span className="flex-1 text-xs text-voxly-ink-5">Unassigned</span>
-                            <span className="text-xs text-voxly-ink-6">{unassignedCount}</span>
+                            <span className="flex-1 text-xs text-voxly-ink-6">Synced</span>
+                            <span className="text-xs font-semibold text-foreground">{synced.length}</span>
                         </div>
+                        <div className="flex items-center gap-2 px-3 py-[7px] border-t border-border">
+                            <GitCommit className="w-3 h-3 text-voxly-ink-5 flex-none" />
+                            <span className="flex-1 text-xs text-voxly-ink-6">Commits (7d)</span>
+                            <span className="text-xs font-semibold text-foreground">{commitsLast7}</span>
+                        </div>
+                        <div className="flex items-center gap-2 px-3 py-[7px] border-t border-border">
+                            <span className="w-3 flex-none" />
+                            <span className="flex-1 text-xs text-voxly-ink-6">Open issues</span>
+                            <span className="text-xs font-semibold text-foreground">{openIssues}</span>
+                        </div>
+                        <div className="flex items-center gap-2 px-3 py-[7px] border-t border-border">
+                            <span className="w-3 flex-none" />
+                            <span className="flex-1 text-xs text-voxly-ink-6">Open PRs</span>
+                            <span className="text-xs font-semibold text-foreground">{openPRs}</span>
+                        </div>
+                        {withRepo.length > synced.length && (
+                            <div className="px-3.5 py-2.5 border-t border-border text-[11px] text-voxly-ink-5 leading-relaxed">
+                                {withRepo.length - synced.length} linked {withRepo.length - synced.length === 1 ? 'repo has' : 'repos have'} never synced.
+                            </div>
+                        )}
                     </div>
                 </Panel>
 
@@ -443,7 +436,9 @@ export default function ProjectsListPage() {
 
                 <Panel title="Recent Activity" defaultOpen={false}>
                     <div className="pb-1">
-                        {recentActivity.map(p => (
+                        {recentActivity.length === 0 ? (
+                            <div className="px-3 py-3 text-[11.5px] text-voxly-ink-5">No projects yet</div>
+                        ) : recentActivity.map(p => (
                             <div key={p.id} className="flex items-center gap-2 px-3 py-[7px] border-t border-border">
                                 <span className={`w-1.5 h-1.5 rounded-full flex-none ${(STATUS_STYLE[p.status] ?? STATUS_STYLE.active).dot}`} />
                                 <span className="text-[11.5px] text-voxly-ink-6 truncate">{p.name} updated {timeAgo(p.updated_at)}</span>
