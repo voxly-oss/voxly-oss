@@ -9,11 +9,19 @@ from app.database import get_db
 from app.models.user import User
 from app.models.client import Client
 from app.schemas.client import ClientCreate, ClientUpdate, ClientResponse
-from app.utils.auth import get_current_user
-from app.utils.tenant_context import TenantContext, get_tenant_context, shadow_verify_read
+from app.utils.api_key_auth import get_current_user_or_api_key
+from app.utils.tenant_context import TenantContext, get_tenant_context_dual, shadow_verify_read
 
 router = APIRouter()
 CLIENT_NOT_FOUND = "Client not found"
+MAX_LIST_LIMIT = 100
+
+
+def _clamp_pagination(skip: int, limit: int) -> tuple[int, int]:
+    """Postgres raises InvalidRowCountInResultOffsetClause on a negative
+    OFFSET/LIMIT (500); SQLite silently tolerates it, which is why this was
+    invisible until it hit production. Clamp before it reaches the query."""
+    return max(skip, 0), min(max(limit, 1), MAX_LIST_LIMIT)
 
 
 def _org_scoped_client_count(db: Session, org_id: UUID) -> int:
@@ -29,10 +37,11 @@ async def list_clients(*,
     skip: int = 0,
     limit: int = 100,
     db: Annotated[Session , Depends(get_db)],
-    current_user: Annotated[User , Depends(get_current_user)],
-    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    current_user: Annotated[User , Depends(get_current_user_or_api_key)],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context_dual)],
 ):
     """List all clients for the current user."""
+    skip, limit = _clamp_pagination(skip, limit)
     base_query = db.query(Client).filter(
         Client.user_id == current_user.id, Client.deleted_at.is_(None)
     )
@@ -48,8 +57,8 @@ async def create_client(*,
     client_data: ClientCreate,
     background_tasks: BackgroundTasks,
     db: Annotated[Session , Depends(get_db)],
-    current_user: Annotated[User , Depends(get_current_user)],
-    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    current_user: Annotated[User , Depends(get_current_user_or_api_key)],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context_dual)],
 ):
     """Create a new client."""
     # Check phone uniqueness within this user's clients only
@@ -82,15 +91,20 @@ async def create_client(*,
         db.rollback()
         import logging
         logging.getLogger(__name__).error(f"Failed to create client: {e}", exc_info=True)
-        # Surface the real error for unique constraint violations
-        error_msg = str(e).lower()
-        if "unique" in error_msg or "duplicate" in error_msg:
-            if "telegram" in error_msg:
-                detail = "This Telegram Chat ID is already linked to another client"
-            elif "phone" in error_msg:
-                detail = "This phone number is already in use"
-            else:
-                detail = "A unique constraint was violated"
+        # Match on the DB constraint name, not str(e) — SQLAlchemy's exception
+        # string includes the full compiled INSERT statement (every column
+        # name, including telegram_chat_id), so a substring check like
+        # "telegram" in str(e) always matched even on a plain phone conflict.
+        orig = str(getattr(e, "orig", "")).lower()
+        if "telegram_chat_id" in orig:
+            detail = "This Telegram Chat ID is already linked to another client"
+        elif "phone" in orig:
+            detail = "This phone number is already in use"
+        elif "unique" in orig or "duplicate" in orig:
+            detail = "A unique constraint was violated"
+        else:
+            detail = None
+        if detail:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -114,7 +128,7 @@ async def create_client(*,
 async def get_client(*, 
     client_id: UUID,
     db: Annotated[Session , Depends(get_db)],
-    current_user: Annotated[User , Depends(get_current_user)],
+    current_user: Annotated[User , Depends(get_current_user_or_api_key)],
 ):
     """Get a specific client by ID."""
     client = (
@@ -137,7 +151,7 @@ async def update_client(*,
     client_id: UUID,
     client_data: ClientUpdate,
     db: Annotated[Session , Depends(get_db)],
-    current_user: Annotated[User , Depends(get_current_user)],
+    current_user: Annotated[User , Depends(get_current_user_or_api_key)],
 ):
     """Update a client."""
     client = (
@@ -187,7 +201,7 @@ async def update_client(*,
 async def delete_client(*, 
     client_id: UUID,
     db: Annotated[Session , Depends(get_db)],
-    current_user: Annotated[User , Depends(get_current_user)],
+    current_user: Annotated[User , Depends(get_current_user_or_api_key)],
 ):
     """Delete a client."""
     client = (

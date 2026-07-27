@@ -38,6 +38,7 @@ from app.models.role import Role
 from app.models.user import User
 from app.utils import tenant_metrics
 from app.utils.auth import get_current_user
+from app.utils.api_key_auth import get_current_user_or_api_key
 
 logger = logging.getLogger(__name__)
 
@@ -194,6 +195,19 @@ async def get_tenant_context(
     """FastAPI dependency wrapper around resolve_tenant_context(). Request-scoped
     via FastAPI's standard dependency caching — resolves once per request even
     if declared by multiple things in the handler chain."""
+    return resolve_tenant_context(db, current_user)
+
+
+async def get_tenant_context_dual(
+    current_user: User = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+) -> TenantContext:
+    """Same as get_tenant_context(), but resolves the principal via either an
+    X-API-Key header or a JWT Bearer token (see api_key_auth.py). Routes meant
+    for programmatic access must depend on this — and on
+    get_current_user_or_api_key for `current_user` — instead of the JWT-only
+    variants, or a request authenticated with a valid API key still 401s here
+    (BUG-05 / F-37 in PRODUCTION_ACCEPTANCE_REPORT.md)."""
     return resolve_tenant_context(db, current_user)
 
 

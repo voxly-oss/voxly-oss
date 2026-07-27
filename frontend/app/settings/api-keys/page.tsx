@@ -18,7 +18,6 @@ import {
 } from 'lucide-react';
 import SettingsShell from '@/components/SettingsShell';
 import { Panel, PanelRow, PanelText } from '@/components/SidePanel';
-import { PreviewBanner } from '@/components/PreviewBadge';
 
 interface APIKeyData {
     id: string; key_prefix: string; label: string; scopes: string[]; is_active: boolean;
@@ -154,13 +153,18 @@ export default function APIKeysSettingsPage() {
                         </Button>
                     </div>
 
-                    {/* Key management below is fully real. What a key cannot yet do
-                        is authenticate a request — the dual-auth dependency exists
-                        in the backend but is not attached to any route, so saying
-                        otherwise here would be a promise the API can't keep. */}
-                    <PreviewBanner>
-                        <b className="font-semibold">Preview.</b> Creating, rotating, and revoking keys is live, and revocation takes effect immediately. Programmatic request authentication is not enabled yet, so these keys cannot sign API calls today.
-                    </PreviewBanner>
+                    {/* get_current_user_or_api_key is now attached to the Clients,
+                        Projects, and Milestones routes (BUG-05 in
+                        PRODUCTION_ACCEPTANCE_REPORT.md) — a key genuinely
+                        authenticates those requests. It does not (yet) cover every
+                        endpoint, so this states scope rather than claiming blanket
+                        "full API access" the key can't back everywhere. */}
+                    <div className="rounded-xl border border-border bg-card px-[18px] py-3 flex items-center gap-2.5">
+                        <Key className="w-4 h-4 text-voxly-ink-5 flex-none" />
+                        <span className="text-[12.5px] text-voxly-ink-6 leading-relaxed">
+                            Active keys authenticate requests to the Clients, Projects, and Milestones APIs via an <code className="text-[11.5px] bg-secondary px-1 py-0.5 rounded">X-API-Key</code> header. Other endpoints still require signing in.
+                        </span>
+                    </div>
 
                     {keys.length > 0 && (
                         <div className="flex items-center gap-[22px] px-[18px] py-3.5 border border-border rounded-xl bg-card flex-wrap">
