@@ -21,7 +21,8 @@ class Milestone(Base):
     completed_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
+    deleted_at = Column(DateTime, nullable=True, index=True)
+
     # Relationships
     project = relationship("Project", back_populates="milestones")
     

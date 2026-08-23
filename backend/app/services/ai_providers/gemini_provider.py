@@ -120,18 +120,6 @@ def _build_provider_response(response, model_name: str):
     )()
 
 
-def _build_error_provider_response(error: Exception):
-    return type(
-        "ProviderResponse",
-        (),
-        {
-            "content": [type("TextBlock", (), {"type": "text", "text": f"Error: {error}"})()],
-            "stop_reason": "end_turn",
-            "usage": type("Usage", (), {"input_tokens": 0, "output_tokens": 0})(),
-            "model": "error",
-        },
-    )()
-
 class GeminiProvider(AIProvider):
     """Google Gemini 2.5 Flash provider using the modern google-genai SDK."""
     
@@ -242,7 +230,7 @@ class GeminiProvider(AIProvider):
 
         except Exception as e:
             logger.error(f"Gemini Tool Error: {e}")
-            return _build_error_provider_response(e)
+            raise
 
     @staticmethod
     def _safe_int(value, default: int = 0) -> int:

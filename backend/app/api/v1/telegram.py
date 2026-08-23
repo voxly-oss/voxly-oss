@@ -17,6 +17,7 @@ from app.config import settings
 from app.database import SessionLocal
 from app.services.telegram_service import send_telegram_message
 from app.services.messaging_core import find_client_by_telegram, process_incoming_message
+from app.services.localization import detect_language, t
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -60,6 +61,10 @@ async def telegram_webhook(*, request: Request, background_tasks: BackgroundTask
     # Telegram file photos — fetch the largest
     photo_list = message.get("photo")
     photo_file_id = photo_list[-1]["file_id"] if photo_list else None
+    # Telegram voice notes / audio (Phase 0: transcribed by messaging_core)
+    voice = message.get("voice") or message.get("audio")
+    audio_file_id = voice.get("file_id") if voice else None
+    audio_mime = (voice.get("mime_type") if voice else None) or "audio/ogg"
 
     if not chat_id:
         return {"status": "ignored", "reason": "no_chat_id"}
@@ -85,6 +90,8 @@ async def telegram_webhook(*, request: Request, background_tasks: BackgroundTask
         chat_id,
         text,
         photo_file_id,
+        audio_file_id,
+        audio_mime,
     )
 
     return {"status": "processing"}
@@ -94,25 +101,30 @@ async def _process_telegram_message(
     chat_id: str,
     text: str,
     photo_file_id: str = None,
+    audio_file_id: str = None,
+    audio_mime: str = None,
 ):
     """Background task: process incoming Telegram message and send AI reply."""
     db = SessionLocal()
     try:
+        lang = detect_language(text)
         client = find_client_by_telegram(db, chat_id)
         if not client:
             await send_telegram_message(
                 chat_id,
-                (
-                    "Sorry, your Telegram account isn't linked to any client yet.\n\n"
-                    f"Your Chat ID is: `{chat_id}`\n"
-                    "Please share this with your project manager. 🙏"
-                ),
+                t("tg_not_linked", lang, chat_id=chat_id),
             )
             return
 
-        # Resolve photo to a URL if present
+        # Resolve media to a URL. Voice notes take priority (transcribed);
+        # otherwise fall back to a photo (vision). Telegram file URLs embed the
+        # bot token, so no separate auth is needed.
         media_url = None
-        if photo_file_id:
+        media_content_type = None
+        if audio_file_id:
+            media_url = await _get_telegram_file_url(audio_file_id)
+            media_content_type = audio_mime
+        elif photo_file_id:
             media_url = await _get_telegram_file_url(photo_file_id)
 
         reply = await process_incoming_message(
@@ -120,6 +132,7 @@ async def _process_telegram_message(
             client=client,
             message=text or "Hello",
             media_url=media_url,
+            media_content_type=media_content_type,
         )
 
         await send_telegram_message(chat_id, reply)
@@ -130,7 +143,7 @@ async def _process_telegram_message(
         try:
             await send_telegram_message(
                 chat_id,
-                "Sorry, something went wrong. Please try again later.",
+                t("tg_error", detect_language(text)),
             )
         except Exception:
             pass

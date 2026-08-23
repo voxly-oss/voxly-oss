@@ -2,10 +2,15 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { useAuth } from './useAuth';
 import { useToast } from './use-toast';
 
+// Matches app/websockets/manager.py's build_event() envelope (Phase 3
+// Milestone 4): every broadcast is {event, timestamp, conversation_id,
+// organization_id, payload} — there is no top-level "type" or "message".
 export interface WebSocketMessage {
-    type: string;
-    payload?: any;
-    message?: any;
+    event: string;
+    timestamp: string;
+    conversation_id: string | null;
+    organization_id: string | null;
+    payload: any;
 }
 
 // Reconnect config
@@ -20,6 +25,7 @@ export function useWebSocket() {
     const pingInterval = useRef<NodeJS.Timeout | null>(null);
     const retryCount = useRef(0);
     const retryTimeout = useRef<NodeJS.Timeout | null>(null);
+    const connectRef = useRef<() => void>(() => {});
     const [isConnected, setIsConnected] = useState(false);
     const [lastMessage, setLastMessage] = useState<WebSocketMessage | null>(null);
 
@@ -90,7 +96,7 @@ export function useWebSocket() {
                     const delay = BASE_DELAY_MS * Math.pow(2, retryCount.current);
                     console.log(`[WS] Reconnecting in ${delay}ms...`);
                     retryCount.current += 1;
-                    retryTimeout.current = setTimeout(connect, delay);
+                    retryTimeout.current = setTimeout(() => connectRef.current(), delay);
                 } else if (retryCount.current >= MAX_RETRIES) {
                     console.warn('[WS] Max retries reached. Giving up.');
                     toast({
@@ -111,6 +117,10 @@ export function useWebSocket() {
             console.error('[WS] Connection failed', e);
         }
     }, [token, toast, cleanup]);
+
+    useEffect(() => {
+        connectRef.current = connect;
+    }, [connect]);
 
     useEffect(() => {
         if (token) {

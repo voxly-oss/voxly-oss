@@ -35,6 +35,9 @@ export interface Project {
     expected_end_date: string | null;
     created_at: string;
     updated_at: string;
+    /** Real synced GitHub stats from the github_cache table. Null when the
+     *  project has no repo or has never synced. */
+    github_stats?: GitHubStats | null;
 }
 
 export interface Milestone {
@@ -50,15 +53,94 @@ export interface Milestone {
     updated_at: string;
 }
 
+// ─── Conversations ───
+// These mirror backend/app/schemas/conversation.py exactly. A "conversation"
+// is a client's thread — this system has no separate conversation entity, so
+// `client_id` is the conversation id everywhere, including on WebSocket events.
+
+export type ConversationStatus = 'awaiting_human' | 'ai_handling' | 'resolved' | 'escalated';
+
+export interface GitHubStats {
+    commits_count: number;
+    commits_last_7_days: number;
+    open_issues: number;
+    closed_issues: number;
+    pull_requests: number;
+    last_commit_message: string | null;
+    last_commit_date: string | null;
+    progress_percent: number;
+    synced_at: string | null;
+}
+
+/** One `chat_history` row. Shape is shared by GET /chat/history/{id},
+ *  GET /chat/messages, and the conversation.message_completed WS payload. */
 export interface ChatMessage {
     id: string;
     client_id: string;
+    client_name: string;
     project_id: string | null;
     message: string;
+    /** Kept for backward compatibility; `ai_response` is the alias to prefer. */
     response: string;
+    ai_response: string;
     tokens_used: number;
     model_used: string | null;
+    channel: string;
+    confidence: number | null;
+    sentiment: string | null;
+    language: string | null;
+    ai_response_time_ms: number | null;
     created_at: string;
+}
+
+/** GET /api/v1/chat/conversations — one row per client, grouped server-side. */
+export interface ConversationSummary {
+    client_id: string;
+    client_name: string;
+    channel: string;
+    last_message: string;
+    last_response: string | null;
+    last_message_at: string;
+    message_count: number;
+    status: ConversationStatus | null;
+    status_updated_at: string | null;
+    confidence: number | null;
+    sentiment: string | null;
+    github_stats: GitHubStats | null;
+}
+
+export interface ConversationsListResponse {
+    total: number;
+    count: number;
+    conversations: ConversationSummary[];
+}
+
+/** GET /api/v1/chat/history/{client_id} */
+export interface ChatHistoryResponse {
+    client_id: string;
+    client_name: string;
+    status: ConversationStatus | null;
+    status_updated_at: string | null;
+    count: number;
+    messages: ChatMessage[];
+    github_stats: GitHubStats | null;
+}
+
+/** GET /api/v1/channels — real per-client, per-channel activity aggregated
+ *  from chat_history. `channel` is only ever "whatsapp" or "telegram". */
+export interface ChannelActivity {
+    client_id: string;
+    channel: string;
+    volume_today: number;
+    last_activity: string | null;
+}
+
+/** GET / PATCH /api/v1/chat/conversations/{client_id}/status */
+export interface ConversationState {
+    client_id: string;
+    status: ConversationStatus;
+    updated_at: string | null;
+    updated_by_user_id: string | null;
 }
 
 // Form types
