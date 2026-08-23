@@ -52,6 +52,7 @@ class TokenData(BaseModel):
     """Schema for JWT token payload."""
     user_id: Optional[UUID] = None
     email: Optional[str] = None
+    token_version: int = 0
 
 
 class PasswordResetRequest(BaseModel):

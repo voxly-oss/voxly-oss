@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { superAdminAPI, authAPI } from '@/lib/api';
+import { superAdminAPI, authAPI, checkAdminSession } from '@/lib/api';
 import {
     Shield, Users, FolderGit2, MessageSquare, Zap, RefreshCw,
     Search, LogIn, ChevronRight, X, TrendingUp, Clock, Bot,
@@ -140,20 +140,19 @@ function AuthGate({ onUnlock }: { onUnlock: (secret: string) => void }) {
     const [checking, setChecking] = useState(true);   // checking JWT on mount
     const [sessionExpired, setSessionExpired] = useState(false);
 
-    // On mount: verify the stored JWT is still valid BEFORE showing the secret input
+    // On mount: verify the stored JWT is still valid BEFORE showing the secret input.
+    // CRITICAL: use checkAdminSession (adminApi, no 401 interceptor) NOT authAPI.me()
+    // authAPI.me() uses the shared `api` instance whose 401 interceptor does
+    // window.location.href = '/login', racing with our setSessionExpired(true).
     useEffect(() => {
         const token = localStorage.getItem('access_token');
         if (!token) {
-            // No token at all — go to login
             window.location.href = '/login?redirect=/voxly-admin';
             return;
         }
-        // Verify token is still accepted by backend
-        import('@/lib/api').then(({ authAPI }) => {
-            authAPI.me()
-                .then(() => setChecking(false))               // token valid → show secret input
-                .catch(() => setSessionExpired(true));         // expired / invalid
-        });
+        checkAdminSession()
+            .then(() => setChecking(false))          // valid → show secret input
+            .catch(() => setSessionExpired(true));    // expired/invalid → show expired UI
     }, []);
 
     const handleUnlock = async () => {
@@ -179,7 +178,7 @@ function AuthGate({ onUnlock }: { onUnlock: (secret: string) => void }) {
                 </div>
                 <h2 className="text-xl font-bold text-white mb-2">Session Expired</h2>
                 <p className="text-white/40 text-sm mb-6">
-                    Your login session has expired. Please sign in again as the super admin account, then you'll be brought back here automatically.
+                    Your login session has expired. Please sign in again as the super admin account, then you&apos;ll be brought back here automatically.
                 </p>
                 <button onClick={() => { localStorage.removeItem('access_token'); window.location.href = '/login?redirect=/voxly-admin'; }}
                     className="w-full py-3 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white font-semibold rounded-xl transition-all flex items-center justify-center gap-2">

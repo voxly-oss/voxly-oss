@@ -4,6 +4,7 @@ Billing & Subscription Routes
 Handles plans, subscriptions, checkout sessions, webhooks, and usage stats.
 Supports dual gateways: Stripe (international) and Razorpay (India).
 """
+import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 from typing import Annotated, Optional
@@ -22,6 +23,7 @@ from app.schemas.subscription import (
 )
 from app.utils.auth import get_current_user
 from app.utils.usage_tracker import get_usage_tracker
+from app.utils.tenant_context import resolve_tenant_context
 from app.config import get_settings
 from app.rate_limit import limiter
 
@@ -76,9 +78,15 @@ async def create_checkout_session(*,
     db: Annotated[Session , Depends(get_db)],
     current_user: Annotated[User , Depends(get_current_user)],
 ):
-    """Create a checkout session for Stripe or Razorpay."""
-    
-    plan = db.query(Plan).filter(Plan.id == request.plan_id).first()
+    """Create a checkout session for Stripe or Razorpay.
+
+    `request` is the starlette Request (slowapi's rate-limit wrapper resolves it
+    by that exact name); the parsed body is `payload`. Reading `plan_id` off
+    `request` raised AttributeError on every call, so this endpoint returned 500
+    unconditionally and no upgrade could ever complete.
+    """
+
+    plan = db.query(Plan).filter(Plan.id == payload.plan_id).first()
     if not plan:
         raise HTTPException(status_code=404, detail="Plan not found")
     
@@ -171,8 +179,19 @@ async def _create_razorpay_checkout(user, plan, price):
 
 
 def _handle_stripe_checkout_completed(db: Session, session: dict) -> None:
-    user_id = session["metadata"]["user_id"]
-    plan_id = session["metadata"]["plan_id"]
+    # Webhook payload metadata is always plain strings -- coerce to UUID
+    # objects up front so every filter/insert below binds correctly (a raw
+    # str against a UUID(as_uuid=True) column fails under SQLite; native
+    # Postgres/psycopg2 is more forgiving, but this is correct either way).
+    user_id = uuid.UUID(session["metadata"]["user_id"])
+    plan_id = uuid.UUID(session["metadata"]["plan_id"])
+
+    # Webhook handler -- no current_user/JWT here, so resolution goes through
+    # the plain callable (Phase 1 Milestone 3), not the FastAPI dependency.
+    # No-op (org_id=None) when the flag is off or the user can't be found.
+    user = db.query(User).filter(User.id == user_id).first()
+    tenant_org_id = resolve_tenant_context(db, user).org_id if user else None
+
     subscription = db.query(Subscription).filter(Subscription.user_id == user_id).first()
 
     if subscription:
@@ -181,10 +200,13 @@ def _handle_stripe_checkout_completed(db: Session, session: dict) -> None:
         subscription.payment_gateway = "stripe"
         subscription.gateway_subscription_id = session.get("subscription")
         subscription.gateway_customer_id = session.get("customer")
+        if tenant_org_id is not None and subscription.org_id is None:
+            subscription.org_id = tenant_org_id
     else:
         subscription = Subscription(
             user_id=user_id,
             plan_id=plan_id,
+            org_id=tenant_org_id,
             status="active",
             payment_gateway="stripe",
             gateway_subscription_id=session.get("subscription"),
@@ -193,10 +215,8 @@ def _handle_stripe_checkout_completed(db: Session, session: dict) -> None:
         db.add(subscription)
 
     plan = db.query(Plan).filter(Plan.id == plan_id).first()
-    if plan:
-        user = db.query(User).filter(User.id == user_id).first()
-        if user:
-            user.subscription_tier = plan.slug
+    if plan and user:
+        user.subscription_tier = plan.slug
 
     db.commit()
     logger.info(f"Stripe subscription activated for user {user_id}")
@@ -219,10 +239,19 @@ def _handle_stripe_subscription_deleted(db: Session, sub_data: dict) -> None:
 
 def _handle_razorpay_payment_captured(db: Session, payment: dict) -> None:
     notes = payment.get("notes", {})
-    user_id = notes.get("user_id")
-    plan_id = notes.get("plan_id")
-    if not user_id or not plan_id:
+    raw_user_id = notes.get("user_id")
+    raw_plan_id = notes.get("plan_id")
+    if not raw_user_id or not raw_plan_id:
         return
+    # See _handle_stripe_checkout_completed for why these are coerced to UUID.
+    user_id = uuid.UUID(raw_user_id)
+    plan_id = uuid.UUID(raw_plan_id)
+
+    # Webhook handler -- no current_user/JWT here, so resolution goes through
+    # the plain callable (Phase 1 Milestone 3), not the FastAPI dependency.
+    # No-op (org_id=None) when the flag is off or the user can't be found.
+    user = db.query(User).filter(User.id == user_id).first()
+    tenant_org_id = resolve_tenant_context(db, user).org_id if user else None
 
     subscription = db.query(Subscription).filter(Subscription.user_id == user_id).first()
     if subscription:
@@ -230,10 +259,13 @@ def _handle_razorpay_payment_captured(db: Session, payment: dict) -> None:
         subscription.status = "active"
         subscription.payment_gateway = "razorpay"
         subscription.gateway_subscription_id = payment.get("id")
+        if tenant_org_id is not None and subscription.org_id is None:
+            subscription.org_id = tenant_org_id
     else:
         subscription = Subscription(
             user_id=user_id,
             plan_id=plan_id,
+            org_id=tenant_org_id,
             status="active",
             payment_gateway="razorpay",
             gateway_subscription_id=payment.get("id"),
@@ -241,10 +273,8 @@ def _handle_razorpay_payment_captured(db: Session, payment: dict) -> None:
         db.add(subscription)
 
     plan = db.query(Plan).filter(Plan.id == plan_id).first()
-    if plan:
-        user = db.query(User).filter(User.id == user_id).first()
-        if user:
-            user.subscription_tier = plan.slug
+    if plan and user:
+        user.subscription_tier = plan.slug
 
     db.commit()
     logger.info(f"Razorpay payment captured for user {user_id}")
@@ -333,9 +363,20 @@ async def get_usage_stats(*,
     else:
         plan = db.query(Plan).filter(Plan.slug == "free").first()
     
-    # Get actual counts
-    clients_count = db.query(Client).filter(Client.user_id == current_user.id).count()
-    projects_count = db.query(Project).join(Client).filter(Client.user_id == current_user.id).count()
+    # Get actual counts (soft-deleted rows must never count against quota)
+    clients_count = db.query(Client).filter(
+        Client.user_id == current_user.id, Client.deleted_at.is_(None)
+    ).count()
+    projects_count = (
+        db.query(Project)
+        .join(Client)
+        .filter(
+            Client.user_id == current_user.id,
+            Client.deleted_at.is_(None),
+            Project.deleted_at.is_(None),
+        )
+        .count()
+    )
     api_keys_count = db.query(APIKey).filter(
         APIKey.user_id == current_user.id,
         APIKey.is_active == True,
