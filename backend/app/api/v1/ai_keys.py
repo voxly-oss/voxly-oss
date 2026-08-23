@@ -9,9 +9,10 @@ import logging
 import base64
 from datetime import datetime, timezone
 from typing import Annotated, List, Optional
+from uuid import UUID
 import hashlib
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from cryptography.fernet import Fernet, InvalidToken
@@ -20,6 +21,8 @@ from app.database import get_db
 from app.models.user import User
 from app.models.user_ai_key import UserAIKey
 from app.api.v1.auth import get_current_user
+from app.utils.tenant_context import TenantContext, get_tenant_context, shadow_verify_read
+from app.rate_limit import limiter
 
 logger = logging.getLogger(__name__)
 
@@ -169,13 +172,21 @@ async def list_providers(*,
     current_user: Annotated[User , Depends(get_current_user)],
     db: Annotated[Session , Depends(get_db)],
 ):
-    """List all supported AI providers and whether the user has a key for each."""
+    """List AI providers with a real implementation, and whether the user has a key for each.
+
+    SUPPORTED_PROVIDERS has entries for providers that are scaffolded but not
+    yet implemented in app.services.ai_providers.PROVIDERS — those are kept
+    out of this customer-facing list until they're real. Adding a provider to
+    PROVIDERS is enough to make it reappear here automatically.
+    """
+    from app.services.ai_providers import PROVIDERS as IMPLEMENTED_PROVIDERS
+
     user_keys = db.query(UserAIKey).filter(
         UserAIKey.user_id == current_user.id,
         UserAIKey.is_active == True,
     ).all()
     user_provider_set = {k.provider for k in user_keys}
-    
+
     return [
         AIKeyProviderInfo(
             id=pid,
@@ -186,15 +197,24 @@ async def list_providers(*,
             has_key=pid in user_provider_set,
         )
         for pid, info in SUPPORTED_PROVIDERS.items()
+        if pid in IMPLEMENTED_PROVIDERS
     ]
 
 
 @router.get("/", response_model=List[AIKeyResponse])
-async def list_ai_keys(*, 
+async def list_ai_keys(*,
     current_user: Annotated[User , Depends(get_current_user)],
     db: Annotated[Session , Depends(get_db)],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
 ):
     """List all user AI keys (masked)."""
+    legacy_total = db.query(UserAIKey).filter(UserAIKey.user_id == current_user.id).count()
+    shadow_verify_read(
+        db, tenant, "user_ai_keys",
+        lambda db, org_id: db.query(UserAIKey).filter(UserAIKey.org_id == org_id).count(),
+        legacy_total,
+    )
+
     keys = db.query(UserAIKey).filter(
         UserAIKey.user_id == current_user.id,
     ).order_by(UserAIKey.created_at.desc()).all()
@@ -222,16 +242,19 @@ async def list_ai_keys(*,
     status_code=status.HTTP_201_CREATED,
     responses={400: {"description": "Unsupported provider"}},
 )
-async def add_ai_key(*, 
+async def add_ai_key(*,
     data: AIKeyCreate,
     current_user: Annotated[User , Depends(get_current_user)],
     db: Annotated[Session , Depends(get_db)],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
 ):
     """Add or replace an AI API key for a provider."""
-    if data.provider not in SUPPORTED_PROVIDERS:
+    from app.services.ai_providers import PROVIDERS as IMPLEMENTED_PROVIDERS
+
+    if data.provider not in SUPPORTED_PROVIDERS or data.provider not in IMPLEMENTED_PROVIDERS:
         raise HTTPException(
             status_code=400,
-            detail=f"Unsupported provider: {data.provider}. Supported: {', '.join(SUPPORTED_PROVIDERS.keys())}",
+            detail=f"Unsupported provider: {data.provider}. Supported: {', '.join(IMPLEMENTED_PROVIDERS.keys())}",
         )
     
     # Deactivate existing key for this provider (one active key per provider)
@@ -248,6 +271,7 @@ async def add_ai_key(*,
     # Create new key
     new_key = UserAIKey(
         user_id=current_user.id,
+        org_id=tenant.org_id,  # Phase 1 Milestone 3 dual-write; None when the flag is off
         provider=data.provider,
         api_key_encrypted=_encrypt_key(data.api_key),
         label=data.label or f"My {SUPPORTED_PROVIDERS[data.provider]['name']} key",
@@ -279,7 +303,7 @@ async def add_ai_key(*,
     responses={404: {"description": "AI key not found"}},
 )
 async def delete_ai_key(*, 
-    key_id: str,
+    key_id: UUID,
     current_user: Annotated[User , Depends(get_current_user)],
     db: Annotated[Session , Depends(get_db)],
 ):
@@ -303,8 +327,10 @@ async def delete_ai_key(*,
     "/{key_id}/validate",
     responses={404: {"description": "AI key not found"}},
 )
-async def validate_ai_key(*, 
-    key_id: str,
+@limiter.limit("10/minute")
+async def validate_ai_key(*,
+    request: Request,
+    key_id: UUID,
     current_user: Annotated[User , Depends(get_current_user)],
     db: Annotated[Session , Depends(get_db)],
 ):

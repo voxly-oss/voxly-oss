@@ -68,6 +68,26 @@ const config: Config = {
                     pink: "#ff0099",
                     violet: "#7000ff",
                 },
+                // v3 "AI Work OS" app-shell tokens — only defined inside .voxly-app-shell
+                // (see globals.css). Inert outside the authenticated app; marketing/auth
+                // pages never reference these classes.
+                voxly: {
+                    violet: "hsl(var(--voxly-violet))",
+                    "violet-soft": "var(--voxly-violet-soft)",
+                    success: "hsl(var(--voxly-success))",
+                    "success-soft": "var(--voxly-success-soft)",
+                    warning: "hsl(var(--voxly-warning))",
+                    "warning-soft": "var(--voxly-warning-soft)",
+                    heat: "hsl(var(--voxly-heat))",
+                    "heat-soft": "var(--voxly-heat-soft)",
+                    "lime-soft": "var(--voxly-lime-soft)",
+                    surface: "hsl(var(--voxly-surface))",
+                    "surface-2": "hsl(var(--voxly-surface-2))",
+                    "surface-3": "hsl(var(--voxly-surface-3))",
+                    "ink-4": "hsl(var(--voxly-ink-4))",
+                    "ink-5": "hsl(var(--voxly-ink-5))",
+                    "ink-6": "hsl(var(--voxly-ink-6))",
+                },
             },
             borderRadius: {
                 lg: "var(--radius)",

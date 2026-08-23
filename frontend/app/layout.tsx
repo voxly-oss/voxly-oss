@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import { Space_Grotesk, Plus_Jakarta_Sans, JetBrains_Mono } from 'next/font/google';
+import { Space_Grotesk, Plus_Jakarta_Sans, JetBrains_Mono, Inter } from 'next/font/google';
 import './globals.css';
 import { AuthProvider } from '@/hooks/useAuth';
 import { Toaster } from '@/components/ui/toaster';
@@ -20,6 +20,13 @@ const jetbrainsMono = JetBrains_Mono({
     variable: '--font-mono',
 });
 
+// Body face for the v3 app shell only (see .voxly-app-shell in globals.css).
+// Marketing/auth pages never reference --font-inter, so they render unchanged.
+const inter = Inter({
+    subsets: ['latin'],
+    variable: '--font-inter',
+});
+
 export const metadata: Metadata = {
     title: 'Voxly - AI-Powered Client Updates for Dev Agencies',
     description:
@@ -34,7 +41,7 @@ export default function RootLayout({
 }) {
     return (
         <html lang="en" suppressHydrationWarning>
-            <body className={`${spaceGrotesk.variable} ${plusJakarta.variable} ${jetbrainsMono.variable} font-sans`} suppressHydrationWarning>
+            <body className={`${spaceGrotesk.variable} ${plusJakarta.variable} ${jetbrainsMono.variable} ${inter.variable} font-sans`} suppressHydrationWarning>
                 <QueryProvider>
                     <AuthProvider>
                         {children}

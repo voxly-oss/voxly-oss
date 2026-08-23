@@ -284,7 +284,7 @@ voxly dev`} />
                                 </div>
                                 <div>
                                     <h4 className="text-sm font-semibold text-white mb-2">voxly dev</h4>
-                                    <p className="text-xs text-white/50 mb-3">The "One-Command" orchestrator. Automatically boots the FastAPI server and Next.js frontend in development mode.</p>
+                                    <p className="text-xs text-white/50 mb-3">The &quot;One-Command&quot; orchestrator. Automatically boots the FastAPI server and Next.js frontend in development mode.</p>
                                 </div>
                                 <div>
                                     <h4 className="text-sm font-semibold text-white mb-2">voxly migrate</h4>
