@@ -10,10 +10,18 @@ from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
 import httpx
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
 from app.config import settings
 from app.database import get_db
 from app.models.user import User
+from app.models.client import Client
+from app.models.api_key import APIKey
+from app.models.user_ai_key import UserAIKey
+from app.models.subscription import Subscription
+from app.models.usage_log import UsageLog
+from app.models.organization import Organization
+from app.models.membership import Membership
 from app.schemas.user import (
     UserCreate,
     UserResponse,
@@ -28,14 +36,47 @@ from app.utils.auth import (
     create_access_token,
     get_current_user,
     create_reset_token,
-    verify_reset_token,
+    decode_reset_token,
+    verify_reset_token_fingerprint,
 )
+from app.utils.tenant_context import resolve_tenant_context
 from app.rate_limit import limiter
 from app.services.email_service import send_password_reset_email
 router = APIRouter()
 OAUTH_STATE_COOKIE_PREFIX = "voxly_oauth_state_"
 USER_ACCOUNT_DEACTIVATED = "User account is deactivated"
 APPLICATION_JSON = "application/json"
+
+# ── Disposable email domain blocklist ──────────────────────────────────────────
+# Block throwaway providers. Real domains (gmail, outlook, company) are allowed.
+_DISPOSABLE_DOMAINS: frozenset[str] = frozenset({
+    "mailinator.com", "guerrillamail.com", "guerrillamail.info", "guerrillamail.biz",
+    "guerrillamail.de", "guerrillamail.net", "guerrillamail.org",
+    "temp-mail.org", "throwam.com", "yopmail.com", "yopmail.fr",
+    "sharklasers.com", "dispostable.com", "fakeinbox.com", "maildrop.cc",
+    "trashmail.com", "trashmail.me", "trashmail.net", "trashmail.io",
+    "getairmail.com", "spamgourmet.com", "10minutemail.com", "10minutemail.net",
+    "tempr.email", "mailnull.com", "mintemail.com", "mailnesia.com",
+    "spamfree24.org", "spamfree24.de", "spam4.me", "spamgob.com",
+    "burnermail.io", "throwaway.email", "tempinbox.com", "mytrashmail.com",
+    "sogetthis.com", "spamherelots.com", "discard.email", "discardmail.com",
+    "mailexpire.com", "spammotel.com", "jetable.com", "jetable.fr.nf",
+    "meltmail.com", "shredmail.com", "mailscrap.com", "spamgoes.in",
+    "filzmail.com", "wegwerfmail.de", "mailboxy.fun", "getnada.com",
+    "lsnamed.com", "abyssemail.com", "armyspy.com", "cuvox.de",
+    "dayrep.com", "einrot.com", "fleckens.hu", "gustr.com",
+    "jourrapide.com", "rhyta.com", "superrito.com", "teleworm.us",
+})
+
+
+def _validate_email_domain(email: str) -> None:
+    """Raise HTTP 422 if the email domain is a known disposable provider."""
+    domain = email.split("@")[-1].lower().strip()
+    if domain in _DISPOSABLE_DOMAINS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Disposable or temporary email addresses are not allowed. Please use a real email.",
+        )
 
 
 def _get_oauth_cookie_name(provider: str) -> str:
@@ -131,7 +172,8 @@ async def google_auth(*,
             user.google_id = google_id
             db.commit()
         else:
-            # 3. Create new user
+            # 3. Create new user — validate domain first
+            _validate_email_domain(email)
             user = User(
                 email=email,
                 full_name=name,
@@ -143,6 +185,15 @@ async def google_auth(*,
             db.refresh(user)
             is_new_user = True
 
+            # Phase 1 Milestone 3: dual-write, in its own transaction after
+            # the User commit above (see /register). Best-effort: never
+            # fails sign-in. No-op when the flag is off.
+            try:
+                resolve_tenant_context(db, user)
+                db.commit()
+            except Exception:
+                db.rollback()
+
     if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -152,7 +203,7 @@ async def google_auth(*,
     # Create JWT
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": str(user.id), "email": user.email},
+        data={"sub": str(user.id), "email": user.email, "tv": user.token_version or 0},
         expires_delta=access_token_expires,
     )
 
@@ -199,7 +250,8 @@ async def github_redirect(*, request: Request):
         403: {"description": USER_ACCOUNT_DEACTIVATED},
     },
 )
-async def github_callback(*, 
+@limiter.limit("10/minute")
+async def github_callback(*,
     request: Request,
     code: str,
     state: str,
@@ -269,6 +321,8 @@ async def github_callback(*,
             user.github_id = github_id
             db.commit()
         else:
+            # New user via GitHub — validate domain
+            _validate_email_domain(primary_email)
             user = User(
                 email=primary_email,
                 full_name=name,
@@ -280,12 +334,21 @@ async def github_callback(*,
             db.refresh(user)
             is_new_user = True
 
+            # Phase 1 Milestone 3: dual-write, in its own transaction after
+            # the User commit above (see /register). Best-effort: never
+            # fails sign-in. No-op when the flag is off.
+            try:
+                resolve_tenant_context(db, user)
+                db.commit()
+            except Exception:
+                db.rollback()
+
     if not user.is_active:
         raise HTTPException(status_code=403, detail=USER_ACCOUNT_DEACTIVATED)
 
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": str(user.id), "email": user.email},
+        data={"sub": str(user.id), "email": user.email, "tv": user.token_version or 0},
         expires_delta=access_token_expires,
     )
     response = JSONResponse(
@@ -304,6 +367,9 @@ async def register(*,
     db: Annotated[Session , Depends(get_db)],
 ):
     """Register a new user."""
+    # Block disposable email domains
+    _validate_email_domain(user_data.email)
+
     # Check if email already exists
     existing_user = db.query(User).filter(User.email == user_data.email).first()
     if existing_user:
@@ -332,7 +398,17 @@ async def register(*,
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to create user"
         )
-    
+
+    # Phase 1 Milestone 3: dual-write, in its own transaction after the User
+    # commit above — a self-heal failure can never roll back the User that
+    # was already committed. Best-effort: never fails registration.
+    # No-op when DUAL_WRITE_ORGANIZATIONS_ENABLED=False.
+    try:
+        resolve_tenant_context(db, db_user)
+        db.commit()
+    except Exception:
+        db.rollback()
+
     return db_user
 
 
@@ -363,21 +439,23 @@ async def login(*,
     # Create access token
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": str(user.id), "email": user.email},
+        data={"sub": str(user.id), "email": user.email, "tv": user.token_version or 0},
         expires_delta=access_token_expires
     )
-    
+
     return Token(access_token=access_token, token_type="bearer")
 
 
 @router.post("/refresh", response_model=Token)
-async def refresh_token(*, 
+@limiter.limit("20/minute")
+async def refresh_token(*,
+    request: Request,
     current_user: Annotated[User , Depends(get_current_user)],
 ):
     """Refresh the access token."""
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": str(current_user.id), "email": current_user.email},
+        data={"sub": str(current_user.id), "email": current_user.email, "tv": current_user.token_version or 0},
         expires_delta=access_token_expires
     )
     
@@ -492,6 +570,9 @@ async def change_password(*,
         )
 
     current_user.password_hash = get_password_hash(password_data.new_password)
+    # Bump so every JWT issued before this moment stops authenticating --
+    # otherwise a token stolen before the change survives it indefinitely.
+    current_user.token_version = (current_user.token_version or 0) + 1
 
     try:
         db.commit()
@@ -524,7 +605,7 @@ async def request_password_reset(*,
     if not user:
         return {"message": "If that email exists, a reset link has been sent."}
     
-    token = create_reset_token(user.email)
+    token = create_reset_token(user.email, user.password_hash)
     reset_link = f"{settings.FRONTEND_URL}/reset-password?token={token}"
     
     # Send email asynchronously
@@ -538,27 +619,43 @@ async def request_password_reset(*,
 
 
 @router.post("/password-reset/confirm", status_code=status.HTTP_200_OK)
-async def confirm_password_reset(*, 
+@limiter.limit("5/minute")
+async def confirm_password_reset(*,
+    request: Request,
     confirm_data: PasswordResetConfirm,
     db: Annotated[Session , Depends(get_db)],
 ):
-    """Validate token and update password."""
-    email = verify_reset_token(confirm_data.token)
-    if not email:
+    """Validate token and update password. The token is single-use: it's
+    bound to a fingerprint of the password hash it was issued against, so
+    once redeemed (or if the password changed any other way since) the same
+    token fails verification on replay."""
+    payload = decode_reset_token(confirm_data.token)
+    if not payload:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired reset token"
         )
-    
+
+    email = payload.get("sub")
     user = db.query(User).filter(User.email == email).first()
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found"
         )
-    
+
+    if not verify_reset_token_fingerprint(payload, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset token"
+        )
+
     user.password_hash = get_password_hash(confirm_data.new_password)
-    
+    # Same reasoning as change-password: a lost-password event is exactly
+    # when existing sessions should stop being trusted, not just the reset
+    # token itself.
+    user.token_version = (user.token_version or 0) + 1
+
     try:
         db.commit()
     except Exception:
@@ -567,7 +664,7 @@ async def confirm_password_reset(*,
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to reset password"
         )
-    
+
     return {"message": "Password has been reset successfully"}
 
 
@@ -581,12 +678,12 @@ async def export_user_data(*,
     """GDPR Endpoint: Export all user data as JSON."""
     from app.models.client import Client
     from app.models.project import Project
-    from app.models.ai_key import AIKey
+    from app.models.user_ai_key import UserAIKey
     from app.models.api_key import APIKey
-    
+
     clients = db.query(Client).filter(Client.user_id == current_user.id).all()
     projects = db.query(Project).join(Client).filter(Client.user_id == current_user.id).all()
-    ai_keys = db.query(AIKey).filter(AIKey.user_id == current_user.id).all()
+    ai_keys = db.query(UserAIKey).filter(UserAIKey.user_id == current_user.id).all()
     api_keys = db.query(APIKey).filter(APIKey.user_id == current_user.id).all()
     
     export_data = {
@@ -621,7 +718,7 @@ async def export_user_data(*,
         "ai_keys": [
             {
                 "id": str(k.id),
-                "provider": k.provider_name,
+                "provider": k.provider,
                 "created_at": k.created_at.isoformat() if k.created_at else None,
             } for k in ai_keys
         ],
@@ -632,20 +729,78 @@ async def export_user_data(*,
 
 @router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
 @limiter.limit("2/minute")
-async def delete_user_account(*, 
+async def delete_user_account(*,
     request: Request,
     current_user: Annotated[User , Depends(get_current_user)],
     db: Annotated[Session , Depends(get_db)],
 ):
-    """GDPR Endpoint: Permanently and fully erase a user account."""
+    """GDPR Endpoint: Permanently and fully erase a user account.
+
+    Single transaction, ordered to satisfy two RESTRICT foreign keys that a
+    flat `db.delete(user)` cannot: organizations.owner_user_id (only clearable
+    by deleting the user's Organization row first) and clients/api_keys/
+    user_ai_keys/subscriptions/usage_logs.org_id (only clearable by deleting
+    those rows before the Organization they reference). See
+    ACCOUNT_DELETION_DESIGN.md for the full dependency graph and the ordering
+    proof this implements.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    # Lock this user's row for the duration of the transaction. Every table
+    # this transaction touches carries a NOT NULL FK back to users.id, so any
+    # concurrent insert referencing this user -- including tenant_context.py's
+    # self-heal creating a brand-new Organization -- must acquire a
+    # FOR KEY SHARE lock on this row first, which conflicts with FOR UPDATE
+    # and blocks until this transaction commits or rolls back.
+    locked_user = (
+        db.query(User).filter(User.id == current_user.id).with_for_update().one()
+    )
+
+    org = (
+        db.query(Organization)
+        .filter(Organization.owner_user_id == locked_user.id)
+        .with_for_update()
+        .first()
+    )
+
+    if org is not None:
+        other_member = (
+            db.query(Membership)
+            .filter(Membership.org_id == org.id, Membership.user_id != locked_user.id)
+            .first()
+        )
+        if other_member is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Transfer organization ownership before deleting your account",
+            )
+
     try:
-        db.delete(current_user)
+        if org is not None:
+            # Clear every row carrying this org's org_id before the org itself
+            # can be deleted (RESTRICT). Bulk delete: one DELETE statement per
+            # table, relying on the already-declared DB-level ON DELETE CASCADE
+            # for everything downstream (projects, milestones, github_cache,
+            # chat_history, conversation_states).
+            for model in (Client, APIKey, UserAIKey, Subscription, UsageLog):
+                db.query(model).filter(model.user_id == locked_user.id).delete(
+                    synchronize_session=False
+                )
+            db.flush()
+
+            # Organization can now be deleted (memberships/invitations CASCADE
+            # automatically). Flushed explicitly so this DELETE executes before
+            # the user delete below, rather than sharing an unordered flush
+            # with it.
+            db.delete(org)
+            db.flush()
+
+        db.delete(locked_user)
         db.commit()
-    except Exception as e:
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.error(f"Failed to delete user {current_user.id}: {e}")
+    except IntegrityError:
         db.rollback()
+        logger.error("Account deletion failed for user %s: unhandled FK constraint", current_user.id, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to delete account"

@@ -51,7 +51,15 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
 
 
 def decode_access_token(token: str) -> Optional[TokenData]:
-    """Decode and validate a JWT access token."""
+    """Decode and validate a JWT access token.
+
+    A password-reset token (create_reset_token) shares this signing key and
+    the same iss/aud, so it passes structural validation here too -- the only
+    thing that has ever stopped it is that its `sub` is an email, not a UUID,
+    which made `UUID(user_id)` raise an uncaught ValueError (500) instead of a
+    clean 401. Reject anything carrying a reset `scope` claim outright, and
+    treat a malformed `sub` as "not a valid access token" rather than crashing.
+    """
     try:
         payload = jwt.decode(
             token,
@@ -60,32 +68,54 @@ def decode_access_token(token: str) -> Optional[TokenData]:
             issuer="voxly_api",
             audience="voxly_frontend",
         )
+        if payload.get("scope") is not None:
+            # Only special-purpose tokens (e.g. password_reset) carry a scope
+            # claim; a real access token never does.
+            return None
+
         user_id: str = payload.get("sub")
         email: str = payload.get("email")
 
         if user_id is None:
             return None
 
-        return TokenData(user_id=UUID(user_id), email=email)
-    except InvalidTokenError:
+        # Missing "tv" means a token minted before this claim existed --
+        # treat that as version 0, matching every user's starting value, so
+        # this rollout doesn't force-log-out already-issued sessions.
+        return TokenData(user_id=UUID(user_id), email=email, token_version=payload.get("tv", 0))
+    except (InvalidTokenError, ValueError):
         return None
 
 
-def create_reset_token(email: str) -> str:
-    """Create a 15-minute password reset token."""
+def _password_fingerprint(password_hash: str) -> str:
+    """One-way fingerprint of a password hash, bound into reset tokens so
+    they stop working the instant the hash changes -- either because the
+    token was just redeemed, or the password changed some other way in the
+    meantime. Never embed the raw bcrypt hash in a JWT claim (client-visible);
+    this fingerprint doesn't allow recovering it."""
+    return hashlib.sha256(f"{password_hash}{settings.SECRET_KEY}".encode()).hexdigest()[:32]
+
+
+def create_reset_token(email: str, password_hash: str) -> str:
+    """Create a 15-minute, single-use password reset token."""
     expire = datetime.now(timezone.utc) + timedelta(minutes=15)
     to_encode = {
         "exp": expire,
         "sub": email,
         "scope": "password_reset",
+        "pwfp": _password_fingerprint(password_hash),
         "iss": "voxly_api",
         "aud": "voxly_frontend",
     }
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
 
-def verify_reset_token(token: str) -> Optional[str]:
-    """Verify a password reset token and return the email."""
+def decode_reset_token(token: str) -> Optional[dict]:
+    """Structurally validate a password-reset token (signature, expiry,
+    issuer, audience, scope) and return its payload. Does NOT check
+    single-use -- the caller must additionally look up the target user and
+    call verify_reset_token_fingerprint() with their *current* password hash,
+    since the token can't be checked for reuse without knowing who it's for."""
     try:
         payload = jwt.decode(
             token,
@@ -96,9 +126,16 @@ def verify_reset_token(token: str) -> Optional[str]:
         )
         if payload.get("scope") != "password_reset":
             return None
-        return payload.get("sub")
+        return payload
     except InvalidTokenError:
         return None
+
+
+def verify_reset_token_fingerprint(payload: dict, password_hash: str) -> bool:
+    """True if the token's embedded fingerprint still matches the user's
+    current password hash -- false once the token has already been redeemed
+    once, or the password changed any other way since it was issued."""
+    return payload.get("pwfp") == _password_fingerprint(password_hash)
 
 
 async def get_current_user(
@@ -126,6 +163,12 @@ async def get_current_user(
             detail="User account is deactivated",
         )
 
+    if token_data.token_version != (user.token_version or 0):
+        # Token was minted before the user's last password change -- reject
+        # it exactly like an expired token rather than a distinct error, so
+        # this doesn't become an oracle for "was the password ever changed".
+        raise credentials_exception
+
     return user
 
 
@@ -137,6 +180,9 @@ def get_user_from_token(token: str, db: Session) -> Optional[User]:
 
     user = db.query(User).filter(User.id == token_data.user_id).first()
     if user is None or not user.is_active:
+        return None
+
+    if token_data.token_version != (user.token_version or 0):
         return None
 
     return user

@@ -112,44 +112,75 @@ async def list_all_tenants(*,
     db: Annotated[Session , Depends(get_db)],
     _: Annotated[User , Depends(require_super_admin)],
 ):
-    """List all tenants (agency owners) with usage stats."""
+    """
+    List all tenants with usage stats.
+
+    Architect's Note: Uses a GROUP BY aggregation pattern instead of a loop-per-user.
+    This reduces DB round-trips from O(5N) to O(4) regardless of tenant count.
+    """
     users = db.query(User).order_by(User.created_at.desc()).offset(skip).limit(limit).all()
+    if not users:
+        return []
 
-    result = []
-    for user in users:
-        client_count = db.query(func.count(Client.id)).filter(Client.user_id == user.id).scalar() or 0
-        project_count = db.query(func.count(Project.id)).join(
-            Client, Client.id == Project.client_id
-        ).filter(Client.user_id == user.id).scalar() or 0
+    user_ids = [u.id for u in users]
 
-        client_ids = [c.id for c in db.query(Client.id).filter(Client.user_id == user.id).all()]
-        message_count = 0
-        if client_ids:
-            message_count = db.query(func.count(ChatHistory.id)).filter(
-                ChatHistory.client_id.in_(client_ids)
-            ).scalar() or 0
+    # ── 1. Client counts per user (1 query) ──────────────────────────────────
+    client_counts_raw = (
+        db.query(Client.user_id, func.count(Client.id))
+        .filter(Client.user_id.in_(user_ids))
+        .group_by(Client.user_id)
+        .all()
+    )
+    client_count_map: dict = {str(uid): cnt for uid, cnt in client_counts_raw}
 
-        # Get plan name from subscription
-        plan_name = None
-        sub = db.query(Subscription).filter(Subscription.user_id == user.id).first()
-        if sub:
-            plan = db.query(Plan).filter(Plan.id == sub.plan_id).first()
-            if plan:
-                plan_name = plan.name
+    # ── 2. Project counts per user (1 query via client join) ─────────────────
+    project_counts_raw = (
+        db.query(Client.user_id, func.count(Project.id))
+        .join(Project, Project.client_id == Client.id)
+        .filter(Client.user_id.in_(user_ids))
+        .group_by(Client.user_id)
+        .all()
+    )
+    project_count_map: dict = {str(uid): cnt for uid, cnt in project_counts_raw}
 
-        result.append(TenantSummary(
+    # ── 3. Message counts per user (1 query via client join) ─────────────────
+    message_counts_raw = (
+        db.query(Client.user_id, func.count(ChatHistory.id))
+        .join(ChatHistory, ChatHistory.client_id == Client.id)
+        .filter(Client.user_id.in_(user_ids))
+        .group_by(Client.user_id)
+        .all()
+    )
+    message_count_map: dict = {str(uid): cnt for uid, cnt in message_counts_raw}
+
+    # ── 4. Plan names via subscriptions (1 query with join) ──────────────────
+    plan_name_map: dict = {}
+    subs = (
+        db.query(Subscription.user_id, Plan.name)
+        .join(Plan, Plan.id == Subscription.plan_id)
+        .filter(Subscription.user_id.in_(user_ids))
+        .all()
+    )
+    for sub_user_id, plan_name in subs:
+        plan_name_map[str(sub_user_id)] = plan_name
+
+    # ── Build result using O(1) HashMap lookups ───────────────────────────────
+    result = [
+        TenantSummary(
             id=str(user.id),
             email=user.email,
             full_name=user.full_name,
             agency_name=user.agency_name,
             is_active=user.is_active,
             subscription_tier=user.subscription_tier,
-            plan_name=plan_name,
-            client_count=client_count,
-            project_count=project_count,
-            message_count=message_count,
+            plan_name=plan_name_map.get(str(user.id)),
+            client_count=client_count_map.get(str(user.id), 0),
+            project_count=project_count_map.get(str(user.id), 0),
+            message_count=message_count_map.get(str(user.id), 0),
             created_at=user.created_at.isoformat(),
-        ))
+        )
+        for user in users
+    ]
 
     return result
 
@@ -193,8 +224,24 @@ async def override_user_plan(*,
     if not user:
         raise HTTPException(status_code=404, detail=USER_NOT_FOUND)
 
+    plan = db.query(Plan).filter(Plan.slug == payload.subscription_tier).first()
+    if not plan:
+        raise HTTPException(status_code=400, detail=f"Unknown plan: {payload.subscription_tier}")
+
     old_tier = user.subscription_tier
     user.subscription_tier = payload.subscription_tier
+
+    # billing.py::get_usage_stats reads limits from the Subscription table,
+    # not subscription_tier — keep both in sync, mirroring the same
+    # find-or-create pattern the Stripe/Razorpay webhook handlers use.
+    subscription = db.query(Subscription).filter(Subscription.user_id == user_id).first()
+    if subscription:
+        subscription.plan_id = plan.id
+        subscription.status = "active"
+    else:
+        subscription = Subscription(user_id=user_id, plan_id=plan.id, status="active")
+        db.add(subscription)
+
     db.commit()
 
     logger.info(f"Super admin changed {user.email} plan: {old_tier} → {payload.subscription_tier}")
@@ -258,6 +305,7 @@ async def impersonate_user(*,
             "sub": str(user.id),
             "email": user.email,
             "impersonated_by": admin.email,
+            "tv": user.token_version or 0,
         },
         expires_delta=timedelta(minutes=15),
     )
@@ -270,3 +318,154 @@ async def impersonate_user(*,
         impersonated_user=user.email,
         warning="This token expires in 15 minutes. All actions will be logged.",
     )
+
+
+# ─── Tenant Detail ────────────────────────────────────────────────────────────
+
+class TenantDetail(TenantSummary):
+    """Full breakdown for a single tenant."""
+    total_messages: int
+    tokens_used: int
+    last_active: Optional[str] = None
+    recent_messages: List[dict]   # metadata only — no PII content
+
+
+@router.get("/tenants/{user_id}", response_model=TenantDetail, include_in_schema=False)
+async def get_tenant_detail(*,
+    user_id: UUID,
+    db: Annotated[Session, Depends(get_db)],
+    _: Annotated[User, Depends(require_super_admin)],
+):
+    """Get full detail for a single tenant including recent AI activity metadata."""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail=USER_NOT_FOUND)
+
+    client_ids = [c.id for c in db.query(Client.id).filter(Client.user_id == user_id).all()]
+    client_count = len(client_ids)
+
+    project_count = 0
+    message_count = 0
+    tokens_used = 0
+    last_active = None
+    recent_messages = []
+
+    if client_ids:
+        project_count = db.query(func.count(Project.id)).filter(
+            Project.client_id.in_(client_ids)
+        ).scalar() or 0
+
+        message_count = db.query(func.count(ChatHistory.id)).filter(
+            ChatHistory.client_id.in_(client_ids)
+        ).scalar() or 0
+
+        tokens_used = db.query(func.sum(ChatHistory.tokens_used)).filter(
+            ChatHistory.client_id.in_(client_ids)
+        ).scalar() or 0
+
+        # Build client lookup
+        clients = db.query(Client).filter(Client.id.in_(client_ids)).all()
+        client_name_map = {str(c.id): c.name for c in clients}
+
+        # Last 10 AI messages — metadata only
+        recent = (
+            db.query(ChatHistory)
+            .filter(ChatHistory.client_id.in_(client_ids))
+            .order_by(ChatHistory.created_at.desc())
+            .limit(10)
+            .all()
+        )
+        recent_messages = [
+            {
+                "client_name": client_name_map.get(str(m.client_id), "Unknown"),
+                "provider": m.model_used or "unknown",
+                "tokens": m.tokens_used or 0,
+                "timestamp": m.created_at.isoformat(),
+            }
+            for m in recent
+        ]
+
+        if recent:
+            last_active = recent[0].created_at.isoformat()
+
+    # Get plan
+    plan_name = None
+    sub = db.query(Subscription).filter(Subscription.user_id == user_id).first()
+    if sub:
+        plan = db.query(Plan).filter(Plan.id == sub.plan_id).first()
+        if plan:
+            plan_name = plan.name
+
+    return TenantDetail(
+        id=str(user.id),
+        email=user.email,
+        full_name=user.full_name,
+        agency_name=user.agency_name,
+        is_active=user.is_active,
+        subscription_tier=user.subscription_tier,
+        plan_name=plan_name,
+        client_count=client_count,
+        project_count=project_count,
+        message_count=message_count,
+        total_messages=message_count,
+        tokens_used=int(tokens_used),
+        last_active=last_active,
+        recent_messages=recent_messages,
+        created_at=user.created_at.isoformat(),
+    )
+
+
+# ─── Platform Activity Feed ───────────────────────────────────────────────────
+
+class PlatformActivityItem(BaseModel):
+    tenant_email: str
+    agency_name: Optional[str] = None
+    client_name: str
+    provider: str
+    tokens: int
+    timestamp: str
+
+
+@router.get("/activity", response_model=List[PlatformActivityItem], include_in_schema=False)
+async def get_platform_activity(*,
+    limit: int = 50,
+    db: Annotated[Session, Depends(get_db)],
+    _: Annotated[User, Depends(require_super_admin)],
+):
+    """Platform-wide recent AI activity — metadata only, no message content."""
+    recent = (
+        db.query(ChatHistory)
+        .order_by(ChatHistory.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+    if not recent:
+        return []
+
+    # Batch-load clients
+    client_ids = list({str(m.client_id) for m in recent})
+    clients = db.query(Client).filter(Client.id.in_(client_ids)).all()
+    client_map = {str(c.id): c for c in clients}
+
+    # Batch-load users (tenants)
+    user_ids = list({str(c.user_id) for c in clients})
+    users = db.query(User).filter(User.id.in_(user_ids)).all()
+    user_map = {str(u.id): u for u in users}
+
+    result = []
+    for msg in recent:
+        client = client_map.get(str(msg.client_id))
+        if not client:
+            continue
+        user = user_map.get(str(client.user_id))
+        result.append(PlatformActivityItem(
+            tenant_email=user.email if user else "unknown",
+            agency_name=user.agency_name if user else None,
+            client_name=client.name,
+            provider=msg.model_used or "unknown",
+            tokens=msg.tokens_used or 0,
+            timestamp=msg.created_at.isoformat(),
+        ))
+
+    return result

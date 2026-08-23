@@ -120,20 +120,8 @@ def _build_provider_response(response, model_name: str):
     )()
 
 
-def _build_error_provider_response(error: Exception):
-    return type(
-        "ProviderResponse",
-        (),
-        {
-            "content": [type("TextBlock", (), {"type": "text", "text": f"Error: {error}"})()],
-            "stop_reason": "end_turn",
-            "usage": type("Usage", (), {"input_tokens": 0, "output_tokens": 0})(),
-            "model": "error",
-        },
-    )()
-
 class GeminiProvider(AIProvider):
-    """Google Gemini (Pro 1.5) provider using the modern google-genai SDK."""
+    """Google Gemini 2.5 Flash provider using the modern google-genai SDK."""
     
     def __init__(self, api_key: str = None):
         super().__init__(api_key)
@@ -144,7 +132,7 @@ class GeminiProvider(AIProvider):
             raise ValueError("Gemini provider requires 'google-genai' package. Install backend dependencies.")
         
         self.client = genai.Client(api_key=key)
-        self.model_name = 'gemini-1.5-pro'
+        self.model_name = 'gemini-2.5-flash'
         self.legacy_model = None
         try:
             model_cls = getattr(genai, "GenerativeModel", None)
@@ -159,7 +147,7 @@ class GeminiProvider(AIProvider):
 
     @property
     def default_model(self) -> str:
-        return "gemini-1.5-pro"
+        return "gemini-2.5-flash"
 
     async def generate_response(
         self,
@@ -242,7 +230,7 @@ class GeminiProvider(AIProvider):
 
         except Exception as e:
             logger.error(f"Gemini Tool Error: {e}")
-            return _build_error_provider_response(e)
+            raise
 
     @staticmethod
     def _safe_int(value, default: int = 0) -> int:

@@ -6,7 +6,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
-import { clientsAPI, projectsAPI } from '@/lib/api';
+import { clientsAPI, notificationsAPI, projectsAPI } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -44,6 +44,7 @@ import {
     Clock,
     ArrowUpRight,
     GitBranch,
+    Send,
 } from 'lucide-react';
 import Link from 'next/link';
 import { formatDate, formatPhone } from '@/lib/utils';
@@ -55,6 +56,7 @@ const editClientSchema = z.object({
     phone: z.string().min(10, 'Phone must be at least 10 digits'),
     email: z.string().email('Invalid email').optional().or(z.literal('')),
     company: z.string().optional(),
+    telegram_chat_id: z.string().optional(),
 });
 
 const projectSchema = z.object({
@@ -76,6 +78,8 @@ export default function ClientDetailPage() {
 
     const [editMode, setEditMode] = useState(false);
     const [projectDialogOpen, setProjectDialogOpen] = useState(false);
+    const [followUpOpen, setFollowUpOpen] = useState(false);
+    const [followUpMessage, setFollowUpMessage] = useState('');
 
     const { data: client, isLoading: clientLoading } = useQuery({
         queryKey: ['client', clientId],
@@ -101,6 +105,7 @@ export default function ClientDetailPage() {
                 phone: client.phone,
                 email: client.email || '',
                 company: client.company || '',
+                telegram_chat_id: client.telegram_chat_id || '',
             }
             : undefined,
     });
@@ -120,6 +125,39 @@ export default function ClientDetailPage() {
             toast({ variant: 'destructive', title: 'Failed to update client' });
         },
     });
+
+    // POST /api/v1/notifications/send — delivers a custom WhatsApp message to
+    // this client. The backend caps the body at 1000 chars and rate-limits to
+    // 10/min, so both are enforced here too rather than discovered on failure.
+    const followUpMutation = useMutation({
+        mutationFn: (message: string) =>
+            notificationsAPI.send({ client_id: clientId, message }),
+        onSuccess: (res) => {
+            toast({
+                title: 'Follow-up sent',
+                description: `Delivered to ${res.data?.client_name ?? client?.name ?? 'the client'} on WhatsApp.`,
+            });
+            setFollowUpOpen(false);
+            setFollowUpMessage('');
+        },
+        onError: (err: unknown) => {
+            const response = (err as { response?: { status?: number; data?: { detail?: string } } })?.response;
+            const detail = response?.data?.detail;
+            toast({
+                variant: 'destructive',
+                title: response?.status === 429 ? 'Slow down' : 'Failed to send follow-up',
+                description: response?.status === 429
+                    ? 'Too many messages sent in the last minute. Try again shortly.'
+                    : (typeof detail === 'string' ? detail : 'The message could not be delivered.'),
+            });
+        },
+    });
+
+    const FOLLOW_UP_MAX = 1000;
+    const followUpTrimmed = followUpMessage.trim();
+    const followUpTooLong = followUpMessage.length > FOLLOW_UP_MAX;
+    const canSendFollowUp =
+        !!client?.phone && followUpTrimmed.length > 0 && !followUpTooLong && !followUpMutation.isPending;
 
     const createProjectMutation = useMutation({
         mutationFn: (data: ProjectFormData) =>
@@ -287,24 +325,37 @@ export default function ClientDetailPage() {
                             Added on {formatDate(client.created_at)}
                         </CardDescription>
                     </div>
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setEditMode(!editMode)}
-                        className="border-white/10 text-white hover:bg-white/5"
-                    >
-                        {editMode ? (
-                            <>
-                                <X className="w-4 h-4 mr-2" />
-                                Cancel
-                            </>
-                        ) : (
-                            <>
-                                <Pencil className="w-4 h-4 mr-2" />
-                                Edit Matches
-                            </>
-                        )}
-                    </Button>
+                    <div className="flex items-center gap-2 flex-wrap justify-end">
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setFollowUpOpen(true)}
+                            disabled={!client.phone}
+                            title={client.phone ? 'Send a WhatsApp message to this client' : 'This client has no phone number on file'}
+                            className="border-white/10 text-white hover:bg-white/5 disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                            <Send className="w-4 h-4 mr-2" />
+                            Send Follow-up
+                        </Button>
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setEditMode(!editMode)}
+                            className="border-white/10 text-white hover:bg-white/5"
+                        >
+                            {editMode ? (
+                                <>
+                                    <X className="w-4 h-4 mr-2" />
+                                    Cancel
+                                </>
+                            ) : (
+                                <>
+                                    <Pencil className="w-4 h-4 mr-2" />
+                                    Edit Matches
+                                </>
+                            )}
+                        </Button>
+                    </div>
                 </CardHeader>
                 <CardContent className="pt-6">
                     <AnimatePresence mode="wait">
@@ -352,6 +403,21 @@ export default function ClientDetailPage() {
                                             className="bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:border-violet-500/50 h-11"
                                         />
                                     </div>
+                                    <div className="space-y-2">
+                                        <Label htmlFor="telegram_chat_id" className="text-white/70 flex items-center gap-2">
+                                            <Send className="w-3.5 h-3.5 text-blue-400" />
+                                            Telegram Chat ID
+                                        </Label>
+                                        <Input
+                                            id="telegram_chat_id"
+                                            placeholder="e.g. 123456789"
+                                            {...editForm.register('telegram_chat_id')}
+                                            className="bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:border-violet-500/50 h-11"
+                                        />
+                                        <p className="text-xs text-white/40">
+                                            Client gets this by messaging your Voxly Bot with /start on Telegram
+                                        </p>
+                                    </div>
                                 </div>
                                 <div className="flex justify-end gap-3">
                                     <Button
@@ -382,7 +448,7 @@ export default function ClientDetailPage() {
                                 initial={{ opacity: 0, y: 10 }}
                                 animate={{ opacity: 1, y: 0 }}
                                 exit={{ opacity: 0, y: -10 }}
-                                className="grid md:grid-cols-2 lg:grid-cols-4 gap-6"
+                                className="grid md:grid-cols-2 lg:grid-cols-5 gap-6"
                             >
                                 <div className="flex items-center gap-3 p-4 rounded-xl bg-white/5 border border-white/5">
                                     <div className="p-2.5 bg-blue-500/10 rounded-lg border border-blue-500/20">
@@ -427,6 +493,21 @@ export default function ClientDetailPage() {
                                         </Badge>
                                     </div>
                                 </div>
+                                <div className="flex items-center gap-3 p-4 rounded-xl bg-white/5 border border-white/5">
+                                    <div className="p-2.5 bg-blue-500/10 rounded-lg border border-blue-500/20">
+                                        <Send className="w-4 h-4 text-blue-400" />
+                                    </div>
+                                    <div>
+                                        <p className="text-xs text-white/40 mb-0.5">Telegram</p>
+                                        <p className="font-medium text-white">
+                                            {client.telegram_chat_id ? (
+                                                <span className="font-mono text-sm">{client.telegram_chat_id}</span>
+                                            ) : (
+                                                <span className="text-white/30">Not linked</span>
+                                            )}
+                                        </p>
+                                    </div>
+                                </div>
                             </motion.div>
                         )}
                     </AnimatePresence>
@@ -448,6 +529,83 @@ export default function ClientDetailPage() {
             {projectsContent}
 
             {/* Add project dialog */}
+            {/* Send Follow-up — POST /api/v1/notifications/send */}
+            <Dialog
+                open={followUpOpen}
+                onOpenChange={(open) => {
+                    if (followUpMutation.isPending) return;
+                    setFollowUpOpen(open);
+                    if (!open) setFollowUpMessage('');
+                }}
+            >
+                <DialogContent className="glass-card border-white/10">
+                    <DialogHeader>
+                        <DialogTitle className="text-white flex items-center gap-2">
+                            <Send className="w-4 h-4 text-blue-400" />
+                            Send Follow-up
+                        </DialogTitle>
+                        <DialogDescription className="text-white/60">
+                            Delivered to {client.name} on WhatsApp
+                            {client.phone && <span className="font-mono text-white/40"> · {formatPhone(client.phone)}</span>}
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    <div className="space-y-2">
+                        <Label htmlFor="follow-up-message" className="text-white/80">Message</Label>
+                        <textarea
+                            id="follow-up-message"
+                            rows={5}
+                            autoFocus
+                            value={followUpMessage}
+                            onChange={(e) => setFollowUpMessage(e.target.value)}
+                            onKeyDown={(e) => {
+                                if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && canSendFollowUp) {
+                                    followUpMutation.mutate(followUpTrimmed);
+                                }
+                            }}
+                            placeholder="Quick update on your project…"
+                            className="w-full resize-y rounded-md bg-white/5 border border-white/10 text-white placeholder:text-white/30 focus:border-violet-500/50 focus:outline-none px-3 py-2 text-sm"
+                        />
+                        <div className="flex items-center justify-between text-xs">
+                            <span className="text-white/30">⌘/Ctrl + Enter to send</span>
+                            <span className={followUpTooLong ? 'text-red-400' : 'text-white/40'}>
+                                {followUpMessage.length} / {FOLLOW_UP_MAX}
+                            </span>
+                        </div>
+                        {followUpTooLong && (
+                            <p className="text-xs text-red-400">
+                                Message is {followUpMessage.length - FOLLOW_UP_MAX} character
+                                {followUpMessage.length - FOLLOW_UP_MAX === 1 ? '' : 's'} over the limit.
+                            </p>
+                        )}
+                    </div>
+
+                    <DialogFooter className="gap-2">
+                        <Button
+                            type="button"
+                            variant="ghost"
+                            onClick={() => { setFollowUpOpen(false); setFollowUpMessage(''); }}
+                            disabled={followUpMutation.isPending}
+                            className="text-white/60 hover:text-white hover:bg-white/5"
+                        >
+                            Cancel
+                        </Button>
+                        <Button
+                            type="button"
+                            onClick={() => followUpMutation.mutate(followUpTrimmed)}
+                            disabled={!canSendFollowUp}
+                            className="bg-gradient-to-r from-violet-600 to-blue-600 hover:from-violet-500 hover:to-blue-500 text-white disabled:opacity-40"
+                        >
+                            {followUpMutation.isPending ? (
+                                <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Sending…</>
+                            ) : (
+                                <><Send className="w-4 h-4 mr-2" />Send message</>
+                            )}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
             <Dialog open={projectDialogOpen} onOpenChange={setProjectDialogOpen}>
                 <DialogContent className="glass-card border-white/10">
                     <DialogHeader>

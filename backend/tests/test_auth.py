@@ -138,3 +138,48 @@ def test_get_me_unauthenticated(client: TestClient):
     """Test getting current user without authentication fails."""
     response = client.get("/api/v1/auth/me")
     assert response.status_code == 401
+
+
+def test_export_user_data(client: TestClient):
+    """GDPR export must return 200 with the user's data, including AI keys.
+
+    Regression test for a bad import (`app.models.ai_key.AIKey`, which does
+    not exist) that made this endpoint 500 on every call.
+    """
+    # Register and login
+    client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "export@example.com",
+            "password": "testpassword123",
+            "full_name": "Export User",
+            "agency_name": "Export Agency",
+        },
+    )
+    login_response = client.post(
+        "/api/v1/auth/login",
+        data={
+            "username": "export@example.com",
+            "password": "testpassword123",
+        },
+    )
+    token = login_response.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Add an AI key so the ai_keys branch of the export is actually exercised
+    ai_key_response = client.post(
+        "/api/v1/ai-keys/",
+        json={"provider": "gemini", "api_key": "test-fake-key-1234567890"},
+        headers=headers,
+    )
+    assert ai_key_response.status_code == 201
+
+    response = client.get("/api/v1/auth/me/export", headers=headers)
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["user_profile"]["email"] == "export@example.com"
+    assert data["clients"] == []
+    assert data["projects"] == []
+    assert len(data["ai_keys"]) == 1
+    assert data["ai_keys"][0]["provider"] == "gemini"

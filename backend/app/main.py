@@ -14,6 +14,7 @@ from app.api.v1 import (
     milestones_router,
     chat_router,
     whatsapp_router,
+    telegram_router,
     api_keys_router,
     billing_router,
     notifications_router,
@@ -60,7 +61,14 @@ async def security_headers_middleware(request: Request, call_next):
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Content-Security-Policy"] = "default-src 'self'; frame-ancestors 'none'"
     response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
-    if request.url.scheme == "https":
+    # Cloud Run terminates TLS at its own proxy and forwards the request to
+    # this container over plain HTTP, so request.url.scheme is always "http"
+    # here even for a real https:// client request. Trust the proxy's own
+    # X-Forwarded-Proto header (Cloud Run always sets it) as a fallback, or
+    # HSTS silently never fires in production.
+    forwarded_proto = request.headers.get("x-forwarded-proto", "")
+    is_https = request.url.scheme == "https" or forwarded_proto.lower() == "https"
+    if is_https:
         response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains; preload"
     return response
 
@@ -71,6 +79,7 @@ app.include_router(projects_router, prefix="/api/v1/projects", tags=["Projects"]
 app.include_router(milestones_router, prefix="/api/v1/milestones", tags=["Milestones"])
 app.include_router(chat_router, prefix="/api/v1/chat", tags=["Chat"])
 app.include_router(whatsapp_router, prefix="/api/v1/whatsapp", tags=["WhatsApp"])
+app.include_router(telegram_router, prefix="/api/v1/telegram", tags=["Telegram"])
 app.include_router(api_keys_router, prefix="/api/v1/api-keys", tags=["API Keys"])
 app.include_router(billing_router, prefix="/api/v1/billing", tags=["Billing"])
 app.include_router(notifications_router, prefix="/api/v1/notifications", tags=["Notifications"])
@@ -84,6 +93,9 @@ app.include_router(ai_router, prefix="/api/v1/ai", tags=["AI Agent"])
 
 from app.api.v1.super_admin import router as super_admin_router
 app.include_router(super_admin_router, prefix="/voxly-admin", include_in_schema=False)
+
+from app.api.v1.channels import router as channels_router
+app.include_router(channels_router, prefix="/api/v1/channels", tags=["Channels"])
 
 
 @app.get("/", tags=["Root"])

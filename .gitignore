@@ -75,12 +75,16 @@ docs/internal/
 docs/investor/
 *.pitch
 *.pitch.md
-RUNBOOK.md  
+RUNBOOK.md
 # Founder specific internal logs
 CLAUDE.md
 SESSION_NOTES.md
 implementation_plan.md
 docs/plan.md
+# Reverse-engineering / production-recovery docs — contains exact infra
+# details, unpatched vulnerability locations, and live incident details.
+# Same "never push to public" treatment as CLAUDE.md/SESSION_NOTES.md above.
+docs/reverse-engineering/
 
 # ─── Debug / Test Scripts (may contain tokens) ───
 test_ws.py
@@ -184,3 +188,30 @@ groq.svg
 # ─── Local Scripts ───
 scripts/sonar-fetch.py
 scripts/fix_issues.py
+
+# Security scan tools & logs
+gitleaks*
+sonar-log.*
+
+# ─── Agent Skills (Public) ───
+# These are shared across all projects, so they MUST be public
+.agent/skills/
+.agent/workflows/
+
+# ─── Agent Skills (Public) ───
+# These are shared across all projects, so they MUST be public
+.agent/skills/
+.agent/workflows/
+
+_bmad/
+_bmad/*
+
+_bmad-output/
+_bmad-output/*
+
+.agents/*
+.claude/*
+.copilot/*
+.codeguru/*
+.gemini/*
+.github/agents/

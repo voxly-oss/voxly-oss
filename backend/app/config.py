@@ -68,9 +68,37 @@ class Settings(BaseSettings):
     SUPER_ADMIN_EMAIL: str = ""
     SUPER_ADMIN_SECRET: str = ""  # Extra secret required in X-Admin-Secret header
 
+    # Telegram Bot
+    TELEGRAM_BOT_TOKEN: str = ""
+    TELEGRAM_WEBHOOK_SECRET: str = ""  # Random token to verify Telegram webhook calls
+
     # Application
     DEBUG: bool = False
     RATE_LIMIT_PER_MINUTE: int = 60  # Auth endpoints rate limit
+
+    # Phase 1 Milestone 3: tenant dual-write (temporary migration scaffolding —
+    # see docs/TARGET_ARCHITECTURE.md and CLAUDE.md Phase 1 log). Both default
+    # OFF: flipping them on is a deploy-time decision, not a code change.
+    # With DUAL_WRITE_ORGANIZATIONS_ENABLED=False, tenant resolution performs
+    # zero DB queries and every write path behaves exactly as before Milestone 3.
+    DUAL_WRITE_ORGANIZATIONS_ENABLED: bool = False
+    # Independent of the above — gates an internal, response-invisible
+    # comparison read used to validate org_id-scoped queries before Phase 2
+    # ever cuts real reads over to them.
+    DUAL_READ_SHADOW_VERIFY_ENABLED: bool = False
+
+    # Agent Vision Phase 0 (see docs/AGENT_VISION_RESEARCH.md): transcribe
+    # inbound voice notes before the AI pipeline. Default OFF — flag-off is a
+    # byte-identical no-op (audio media keeps its pre-Phase-0 handling). Uses
+    # OPENAI_API_KEY for OpenAI's transcription API; degrades to no-op if unset.
+    VOICE_TRANSCRIPTION_ENABLED: bool = False
+
+    # Agent Vision Phase 0 slice 2: detect the client's language and localize the
+    # fixed system strings (errors, onboarding). Default OFF — flag-off makes
+    # detect_language() return 'en' for everything, so every canned string keeps
+    # its exact current English text. AI-generated replies mirror language via
+    # the prompt regardless of this flag.
+    LANGUAGE_DETECTION_ENABLED: bool = False
 
     model_config = ConfigDict(
         env_file=".env",

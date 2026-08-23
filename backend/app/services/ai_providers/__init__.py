@@ -25,9 +25,10 @@ PROVIDERS = {
     # "custom": CustomProvider,     # Phase 5
 }
 
-# Default provider — openai confirmed working for dogfood.
-# Priority order: Anthropic -> Gemini -> OpenAI (set in get_provider auto-detect).
-DEFAULT_PROVIDER = "openai"
+# Default provider — Claude (Anthropic). Priority order: Claude → OpenAI → Gemini.
+# Claude's API key is funded and verified working; Gemini's free-tier key runs
+# out of credits (429), so it now sits last in the chain.
+DEFAULT_PROVIDER = "claude"
 
 
 def get_provider(provider_name: str = None, api_key: str = None) -> AIProvider:
@@ -46,16 +47,16 @@ def get_provider(provider_name: str = None, api_key: str = None) -> AIProvider:
     """
     from app.config import settings
 
-    # Provider priority: Anthropic -> Gemini -> OpenAI
+    # Provider priority: Claude → OpenAI → Gemini
     if not provider_name:
         if settings.ANTHROPIC_API_KEY:
             name = "claude"
-        elif settings.GEMINI_API_KEY:
-            name = "gemini"
         elif settings.OPENAI_API_KEY:
             name = "openai"
+        elif settings.GEMINI_API_KEY:
+            name = "gemini"
         else:
-            name = "openai"  # Default fallback
+            name = "claude"  # Default fallback
     else:
         name = provider_name
 

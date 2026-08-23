@@ -14,7 +14,8 @@ from app.config import settings
 from app.database import Base
 from app.models import (
     User, Client, Project, Milestone, ChatHistory, GitHubCache,
-    Plan, Subscription, APIKey, UsageLog
+    Plan, Subscription, APIKey, UsageLog, UserAIKey,
+    Role, Organization, Membership, Invitation
 )
 
 # this is the Alembic Config object, which provides
@@ -22,8 +23,9 @@ from app.models import (
 config = context.config
 SQLALCHEMY_URL_OPTION = "sqlalchemy.url"
 
-# Set sqlalchemy.url from environment
-config.set_main_option(SQLALCHEMY_URL_OPTION, settings.DATABASE_URL)
+# Set sqlalchemy.url from environment — escape % to avoid ConfigParser interpolation
+_db_url = settings.DATABASE_URL.replace("%", "%%")
+config.set_main_option(SQLALCHEMY_URL_OPTION, _db_url)
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.

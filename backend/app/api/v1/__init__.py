@@ -4,6 +4,7 @@ from app.api.v1.projects import router as projects_router
 from app.api.v1.milestones import router as milestones_router
 from app.api.v1.chat import router as chat_router
 from app.api.v1.whatsapp import router as whatsapp_router
+from app.api.v1.telegram import router as telegram_router
 from app.api.v1.api_keys import router as api_keys_router
 from app.api.v1.billing import router as billing_router
 from app.api.v1.notifications import router as notifications_router
@@ -17,6 +18,7 @@ __all__ = [
     "milestones_router",
     "chat_router",
     "whatsapp_router",
+    "telegram_router",
     "api_keys_router",
     "billing_router",
     "notifications_router",

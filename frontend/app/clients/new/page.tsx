@@ -18,7 +18,7 @@ import {
     CardTitle,
 } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
-import { ArrowLeft, Loader2, Sparkles } from 'lucide-react';
+import { ArrowLeft, Loader2, Sparkles, Send } from 'lucide-react';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
 
@@ -30,6 +30,7 @@ const clientSchema = z.object({
         .regex(/^\+?[0-9]+$/, 'Invalid phone number format'),
     email: z.string().email('Invalid email').optional().or(z.literal('')),
     company: z.string().optional(),
+    telegram_chat_id: z.string().optional(),
 });
 
 type ClientFormData = z.infer<typeof clientSchema>;
@@ -54,6 +55,7 @@ export default function NewClientPage() {
                 phone: data.phone,
                 email: data.email || undefined,
                 company: data.company || undefined,
+                telegram_chat_id: data.telegram_chat_id || undefined,
             }),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['clients'] });
@@ -103,7 +105,7 @@ export default function NewClientPage() {
                     </div>
                     <CardDescription className="text-white/60">
                         Add a client to start managing their projects and enable WhatsApp
-                        communication.
+                        & Telegram communication.
                     </CardDescription>
                 </CardHeader>
                 <form onSubmit={handleSubmit(onSubmit)}>
@@ -163,6 +165,23 @@ export default function NewClientPage() {
                                 className="bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:border-violet-500/50 h-11"
                                 {...register('company')}
                             />
+                        </div>
+
+                        {/* Telegram Chat ID — optional */}
+                        <div className="space-y-2">
+                            <Label htmlFor="telegram_chat_id" className="text-white/70 flex items-center gap-2">
+                                <Send className="w-3.5 h-3.5 text-blue-400" />
+                                Telegram Chat ID
+                            </Label>
+                            <Input
+                                id="telegram_chat_id"
+                                placeholder="e.g. 123456789"
+                                className="bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:border-violet-500/50 h-11"
+                                {...register('telegram_chat_id')}
+                            />
+                            <p className="text-xs text-white/40">
+                                Client can get this by messaging your Voxly Bot with /start on Telegram
+                            </p>
                         </div>
                     </CardContent>
                     <div className="p-6 pt-0 flex gap-4">
