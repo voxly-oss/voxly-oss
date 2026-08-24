@@ -16,7 +16,7 @@ zipp>=3.19.1              # pinned by Snyk to avoid CVE
 phonenumbers>=8.13.0      # direct dep (utils/phone.py, schemas/client.py phone validation)
 
 # AI Chat Service
-anthropic>=0.30.0
+anthropic>=1.0.0
 openai>=1.12.0
 google-genai>=1.0.0
 PyGithub==2.9.1
