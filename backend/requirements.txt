@@ -13,7 +13,7 @@ python-dotenv==1.2.2
 cryptography>=46.0.5      # direct dep (ai_keys.py) + Snyk security pin
 google-auth>=2.28.0       # direct dep (auth.py Google OAuth)
 zipp>=3.19.1              # pinned by Snyk to avoid CVE
-phonenumbers>=8.13.0      # direct dep (utils/phone.py, schemas/client.py phone validation)
+phonenumbers>=9.0.37      # direct dep (utils/phone.py, schemas/client.py phone validation)
 
 # AI Chat Service
 anthropic>=0.30.0
