@@ -5,6 +5,7 @@
 # 🚀 Voxly
 
 **The Open Source Agency OS**
+Founded & built by Ravinder Pandey (@ravin972)
 
 AI-powered project management, client communication, and automated oversight for modern agencies.
 
