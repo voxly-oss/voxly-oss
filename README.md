@@ -147,7 +147,7 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 <div align="center">
 
-**Built with ❤️ by the Voxly Team**
+**Built with ❤️ by @ravin972**
 
 [⭐ Star this repo](https://github.com/voxly-oss/voxly-oss) • [🐛 Report Bug](https://github.com/voxly-oss/voxly-oss/issues)
 
