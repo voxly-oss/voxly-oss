@@ -13,7 +13,7 @@ bcrypt<4.1,>=4.0         # passlib 1.7.4 (unmaintained since ~2020) reads bcrypt
                          # (api_key_auth.py's generate_api_key/verify_api_key) with a ValueError at hash time
 python-multipart==0.0.31
 python-dotenv==1.2.2
-cryptography>=46.0.5      # direct dep (ai_keys.py) + Snyk security pin
+cryptography>=50.0.1      # direct dep (ai_keys.py) + Snyk security pin
 google-auth>=2.28.0       # direct dep (auth.py Google OAuth)
 zipp>=3.19.1              # pinned by Snyk to avoid CVE
 phonenumbers>=8.13.0      # direct dep (utils/phone.py, schemas/client.py phone validation)
