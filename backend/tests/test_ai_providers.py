@@ -74,5 +74,5 @@ async def test_groq_provider_uses_groq_endpoint_and_model():
         provider = GroqProvider(api_key="gsk_test")
         kwargs = MockClient.call_args.kwargs
         assert kwargs["base_url"] == "https://api.groq.com/openai/v1"
-        assert provider.default_model == "llama-3.3-70b-versatile"
+        assert provider.default_model == "openai/gpt-oss-120b"
         assert provider.provider_name == "Groq"

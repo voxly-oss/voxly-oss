@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = ""
     # Groq serves open-weight models (OpenAI-compatible API); free tier is rate-limited.
     GROQ_API_KEY: str = ""
-    GROQ_MODEL: str = "llama-3.3-70b-versatile"
+    GROQ_MODEL: str = "openai/gpt-oss-120b"
     # Free-tier model names and limits change often; override without a deploy.
     GEMINI_MODEL: str = "gemini-2.5-flash"
 
