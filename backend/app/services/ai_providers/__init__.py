@@ -15,12 +15,14 @@ from app.services.ai_providers.base import AIProvider, AIResponse
 from app.services.ai_providers.claude_provider import ClaudeProvider
 from app.services.ai_providers.openai_provider import OpenAIProvider
 from app.services.ai_providers.gemini_provider import GeminiProvider
+from app.services.ai_providers.groq_provider import GroqProvider
 
 # Registry of available providers
 PROVIDERS = {
     "claude": ClaudeProvider,
     "openai": OpenAIProvider,
     "gemini": GeminiProvider,
+    "groq": GroqProvider,
     # "ollama": OllamaProvider,     # Phase 4
     # "custom": CustomProvider,     # Phase 5
 }
@@ -49,7 +51,9 @@ def get_provider(provider_name: str = None, api_key: str = None) -> AIProvider:
 
     # Provider priority: Claude → OpenAI → Gemini
     if not provider_name:
-        if settings.ANTHROPIC_API_KEY:
+        if settings.GROQ_API_KEY:
+            name = "groq"
+        elif settings.ANTHROPIC_API_KEY:
             name = "claude"
         elif settings.OPENAI_API_KEY:
             name = "openai"

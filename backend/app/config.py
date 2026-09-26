@@ -21,6 +21,11 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: str = ""
     OPENAI_API_KEY: str = ""
     GEMINI_API_KEY: str = ""
+    # Groq serves open-weight models (OpenAI-compatible API); free tier is rate-limited.
+    GROQ_API_KEY: str = ""
+    GROQ_MODEL: str = "llama-3.3-70b-versatile"
+    # Free-tier model names and limits change often; override without a deploy.
+    GEMINI_MODEL: str = "gemini-2.5-flash"
 
     # GitHub
     GITHUB_TOKEN: str = ""
@@ -30,6 +35,13 @@ class Settings(BaseSettings):
     TWILIO_ACCOUNT_SID: str = ""
     TWILIO_AUTH_TOKEN: str = ""
     TWILIO_WHATSAPP_NUMBER: str = "whatsapp:+14155238886"
+
+    # WhatsApp transport: "twilio" (official) or "waha" (self-hosted open-source gateway)
+    WHATSAPP_PROVIDER: str = "twilio"
+    WAHA_URL: str = ""
+    WAHA_API_KEY: str = ""
+    WAHA_SESSION: str = "default"
+    WAHA_WEBHOOK_SECRET: str = ""  # sent by WAHA in the X-Voxly-Webhook-Token header
 
     # Redis (for caching and Celery)
     REDIS_URL: str = "redis://localhost:6379"

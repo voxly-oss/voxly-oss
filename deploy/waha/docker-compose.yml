@@ -1,0 +1,23 @@
+# Self-hosted WhatsApp gateway (WAHA, open source) for Voxly.
+# Needs an ALWAYS-ON host: it holds a live WhatsApp Web session. Render free
+# sleeps and has no persistent disk, so it cannot run this. See docs/deploy/whatsapp-waha.md
+#
+#   cp .env.example .env   # fill WAHA_API_KEY and DASHBOARD_PASSWORD
+#   docker compose up -d
+services:
+  waha:
+    image: devlikeapro/waha:latest # pin a tested version tag before real users
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000" # never expose directly; put a tunnel/reverse proxy in front
+    environment:
+      WHATSAPP_API_KEY: ${WAHA_API_KEY}
+      WAHA_DASHBOARD_ENABLED: "true"
+      WAHA_DASHBOARD_USERNAME: admin
+      WAHA_DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD}
+      WHATSAPP_SWAGGER_ENABLED: "false"
+    volumes:
+      - waha_sessions:/app/.sessions # the paired WhatsApp session lives here; back it up
+
+volumes:
+  waha_sessions:
