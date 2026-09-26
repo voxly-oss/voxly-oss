@@ -5,7 +5,11 @@ Refactored to use the shared messaging_core pipeline.
 All business logic (AI, history, broadcast) is in messaging_core.py.
 """
 from fastapi import APIRouter, Request, BackgroundTasks, HTTPException
-from app.services.whatsapp_service import send_whatsapp_message, waha_chat_id_to_phone
+from app.services.whatsapp_service import (
+    resolve_waha_lid,
+    send_whatsapp_message,
+    waha_chat_id_to_phone,
+)
 from app.services.messaging_core import find_client_by_phone, process_incoming_message
 from app.services.localization import detect_language, t
 from app.database import SessionLocal
@@ -184,8 +188,12 @@ async def waha_webhook(*, request: Request, background_tasks: BackgroundTasks):
     if event.get("event") != "message" or payload.get("fromMe"):
         return {"status": "ignored", "reason": "not_an_inbound_message"}
 
-    # Groups, status broadcasts and @lid ids have no phone number we can match to a client.
-    phone = waha_chat_id_to_phone(payload.get("from", ""))
+    # Groups and status broadcasts have no phone number to match. WhatsApp's privacy ids
+    # (@lid) are resolved to a phone through WAHA.
+    sender = payload.get("from", "")
+    phone = waha_chat_id_to_phone(sender)
+    if not phone and sender.endswith("@lid"):
+        phone = await resolve_waha_lid(sender)
     body = (payload.get("body") or "").strip()
     if not phone or not body:
         return {"status": "ignored", "reason": "unsupported_or_empty"}

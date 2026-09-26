@@ -55,17 +55,31 @@ def test_webhook_accepts_inbound_text_and_dispatches(client: TestClient, waha_se
     proc.assert_awaited_once_with("+919729041423", "hello", "m1")
 
 
+def test_webhook_resolves_lid_sender_to_phone(client: TestClient, waha_secret):
+    with patch("app.api.v1.whatsapp._process_whatsapp_message", new=AsyncMock()) as proc, patch(
+        "app.api.v1.whatsapp.resolve_waha_lid", new=AsyncMock(return_value="+919729041423")
+    ):
+        resp = client.post(
+            URL, json=_event(**{"from": "555@lid"}), headers={"X-Voxly-Webhook-Token": SECRET}
+        )
+    assert resp.json() == {"status": "processing"}
+    proc.assert_awaited_once_with("+919729041423", "hello", "m1")
+
+
 @pytest.mark.parametrize(
     "body",
     [
         _event(fromMe=True),  # our own outgoing echo must never loop back into the AI
         _event(**{"from": "120363@g.us"}),  # group
         _event(body="   "),  # empty
+        _event(**{"from": "999@lid"}),  # @lid that WAHA cannot map to a phone
         {"event": "session.status", "payload": {}},  # non-message event
     ],
 )
 def test_webhook_ignores_non_inbound(client: TestClient, waha_secret, body):
-    with patch("app.api.v1.whatsapp._process_whatsapp_message", new=AsyncMock()) as proc:
+    with patch("app.api.v1.whatsapp._process_whatsapp_message", new=AsyncMock()) as proc, patch(
+        "app.api.v1.whatsapp.resolve_waha_lid", new=AsyncMock(return_value=None)
+    ):
         resp = client.post(URL, json=body, headers={"X-Voxly-Webhook-Token": SECRET})
     assert resp.status_code == 200
     assert resp.json()["status"] == "ignored"
