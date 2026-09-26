@@ -47,7 +47,7 @@ Check the header field name against the WAHA version you pulled; it is set per s
 
 ## 5. Groq for the LLM
 
-Create a key at console.groq.com (free tier, rate limited) and set `GROQ_API_KEY` on Render. Optionally `GROQ_MODEL` (default `llama-3.3-70b-versatile`). Groq is tried first when its key is set. For an open-weights-only setup, **remove** `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` and `GEMINI_API_KEY` from Render so nothing falls back to a paid or closed provider.
+Create a key at console.groq.com (free tier, rate limited) and set `GROQ_API_KEY` on Render. Optionally `GROQ_MODEL` (default `openai/gpt-oss-120b`; Groq retires models, so if replies fail with `model_not_found`, list `GET https://api.groq.com/openai/v1/models` and set this). Groq is tried first when its key is set. For an open-weights-only setup, **remove** `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` and `GEMINI_API_KEY` from Render so nothing falls back to a paid or closed provider.
 
 Groq hosts the models; the service itself is not open source. If you later want fully self-hosted, any OpenAI-compatible server (vLLM, Ollama) fits the same provider class.
 
