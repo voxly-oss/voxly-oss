@@ -100,7 +100,23 @@ async def admin_chat(*,
     Chat endpoint for the Admin to talk to Voxly AI.
     Capable of using tools to fetch project status, github stats, etc.
     """
-    agent = VoxlyAgent()
+    own_repos = [
+        repo
+        for (repo,) in db.query(Project.github_repo)
+        .join(Client, Project.client_id == Client.id)
+        .filter(
+            Client.user_id == current_user.id,
+            Client.deleted_at.is_(None),
+            Project.deleted_at.is_(None),
+            Project.github_repo.isnot(None),
+        )
+        .all()
+    ]
+    agent = VoxlyAgent(
+        allowed_repos=own_repos,
+        allow_writes=True,
+        allow_internal_docs=True,
+    )
 
     # Construct a system prompt based on user role
     system_prompt = (

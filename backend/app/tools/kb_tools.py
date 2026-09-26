@@ -22,20 +22,17 @@ class LocalDocsTool(Tool):
             "query": {
                 "type": "string",
                 "description": "The search term to look for in documentation"
-            },
-            "root_dir": {
-                "type": "string",
-                "description": "Root directory to search in (optional, defaults to current working directory)"
             }
         },
         "required": ["query"]
     }
 
     async def run(self, query: str, root_dir: str = ".") -> str:
-        # Find all markdown files in docs/
-        docs_path = os.path.join(root_dir, "docs")
+        # root_dir is not model-controlled: it is not in the tool schema, and any value
+        # the model still sends is ignored so it cannot point the search at another path.
+        docs_path = os.path.join(".", "docs")
         if not os.path.exists(docs_path):
-            return f"Error: docs/ directory not found in {root_dir}"
+            return "Error: docs/ directory not found"
 
         md_files = glob.glob(os.path.join(docs_path, "**/*.md"), recursive=True)
         results = []
