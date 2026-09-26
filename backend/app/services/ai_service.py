@@ -69,6 +69,7 @@ async def generate_client_response(
     media_url: str = None,
     provider_name: str = None,
     api_key: str = None,
+    allowed_repos: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
     Generate AI response using the configured provider with automatic fallback.
@@ -106,7 +107,11 @@ async def generate_client_response(
             attempt + 1, len(providers_to_try), pname, client_name,
         )
         try:
-            agent = VoxlyAgent(provider_name=pname, api_key=api_key)
+            agent = VoxlyAgent(
+                provider_name=pname,
+                api_key=api_key,
+                allowed_repos=allowed_repos or [],
+            )
             result = await agent.chat(
                 user_message=client_question,
                 images=[media_url] if media_url else None,

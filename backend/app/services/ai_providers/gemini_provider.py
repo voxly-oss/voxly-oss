@@ -221,7 +221,7 @@ class GeminiProvider(AIProvider):
                 contents=contents,
                 config=types.GenerateContentConfig(
                     system_instruction=system_prompt,
-                    tools=gemini_tools,
+                    tools=gemini_tools or None,
                     max_output_tokens=max_tokens
                 )
             )

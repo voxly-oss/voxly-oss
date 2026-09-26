@@ -149,6 +149,35 @@ async def github_webhook(*, request: Request, background_tasks: BackgroundTasks)
         raise HTTPException(status_code=500, detail="Webhook processing failed")
 
 
+def _unique_project_for_repo(db, repo_full_name: str):
+    """The one live project linked to this repo, or None.
+
+    Any agency can type any repo name into its project, so a repo can match several
+    tenants' projects. Alerts carry commit messages and author names, so with more
+    than one match we send nothing rather than guess and leak one agency's activity to
+    another agency's client.
+    """
+    from sqlalchemy import func
+
+    from app.models.client import Client
+    from app.models.project import Project
+
+    if not repo_full_name:
+        return None
+    matches = (
+        db.query(Project)
+        .join(Client, Project.client_id == Client.id)
+        .filter(
+            func.lower(Project.github_repo) == repo_full_name.lower(),
+            Project.deleted_at.is_(None),
+            Client.deleted_at.is_(None),
+        )
+        .limit(2)
+        .all()
+    )
+    return matches[0] if len(matches) == 1 else None
+
+
 async def notify_client_on_push(payload: dict):
     """
     Send WhatsApp notification to the client when a push is made to their project repo.
@@ -173,18 +202,14 @@ async def notify_client_on_push(payload: dict):
         from app.models.project import Project
         from app.models.client import Client
         
-        project = (
-            db.query(Project)
-            .filter(Project.github_repo == repo_full_name)
-            .first()
-        )
+        project = _unique_project_for_repo(db, repo_full_name)
         if not project:
-            logger.warning(f"No project found for repo '{repo_full_name}' — no alert sent")
+            logger.warning(f"No single project found for repo '{repo_full_name}' — no alert sent")
             return
 
         client = (
             db.query(Client)
-            .filter(Client.id == project.client_id)
+            .filter(Client.id == project.client_id, Client.deleted_at.is_(None))
             .first()
         )
         if not client or not client.phone:
@@ -247,20 +272,17 @@ async def analyze_build_failure(payload: dict):
     # Find the project linked to this repo and notify its owner.
     db = SessionLocal()
     try:
-        from app.models.project import Project  # avoid circular import at module level
+        from app.models.client import Client  # avoid circular import at module level
 
         owner: User | None = None
 
         if repo_full_name:
-            project = (
-                db.query(Project)
-                .filter(Project.github_repo == repo_full_name)
-                .first()
-            )
+            project = _unique_project_for_repo(db, repo_full_name)
             if project:
                 owner = (
                     db.query(User)
-                    .filter(User.id == project.user_id, User.phone.isnot(None))
+                    .join(Client, Client.user_id == User.id)
+                    .filter(Client.id == project.client_id, User.phone.isnot(None))
                     .first()
                 )
 

@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import SessionLocal
 from app.models.client import Client
+from app.models.user import User
 from app.models.project import Project
 from app.models.milestone import Milestone
 from app.models.chat_history import ChatHistory
@@ -33,14 +34,42 @@ logger = logging.getLogger(__name__)
 
 # ── Client lookup ──────────────────────────────────────────────────────────────
 
+def _unique_active_client(db: Session, column, value: str, channel: str) -> Optional[Client]:
+    """The one live client an inbound sender maps to, or None.
+
+    Inbound messages carry only the sender's identity, not which agency (tenant)
+    they meant. Phone numbers are unique per agency, not globally, so the same
+    person can legitimately be a client of two agencies. If more than one live
+    client matches, guessing would answer with (and expose) another agency's
+    project data, so we refuse instead. Deleted/inactive clients and clients of a
+    deactivated agency never match.
+    """
+    matches = (
+        db.query(Client)
+        .join(User, Client.user_id == User.id)
+        .filter(
+            column == value,
+            Client.deleted_at.is_(None),
+            Client.is_active.isnot(False),
+            User.is_active.isnot(False),
+        )
+        .limit(2)
+        .all()
+    )
+    if len(matches) > 1:
+        logger.warning("[%s] Ambiguous sender matches several agencies' clients; not routing", channel)
+        return None
+    return matches[0] if matches else None
+
+
 def find_client_by_phone(db: Session, phone: str) -> Optional[Client]:
     """Look up client by phone number (WhatsApp identifier)."""
-    return db.query(Client).filter(Client.phone == phone).first()
+    return _unique_active_client(db, Client.phone, phone, "whatsapp")
 
 
 def find_client_by_telegram(db: Session, chat_id: str) -> Optional[Client]:
     """Look up client by Telegram chat ID."""
-    return db.query(Client).filter(Client.telegram_chat_id == str(chat_id)).first()
+    return _unique_active_client(db, Client.telegram_chat_id, str(chat_id), "telegram")
 
 
 # ── Shared helpers ─────────────────────────────────────────────────────────────
@@ -49,12 +78,20 @@ def _get_client_project(db: Session, client: Client) -> Optional[Project]:
     """Get the active project for a client, falling back to any project."""
     project = (
         db.query(Project)
-        .filter(Project.client_id == client.id, Project.status == "active")
+        .filter(
+            Project.client_id == client.id,
+            Project.status == "active",
+            Project.deleted_at.is_(None),
+        )
         .first()
     )
     if project:
         return project
-    return db.query(Project).filter(Project.client_id == client.id).first()
+    return (
+        db.query(Project)
+        .filter(Project.client_id == client.id, Project.deleted_at.is_(None))
+        .first()
+    )
 
 
 async def _get_project_github_stats(project: Optional[Project]) -> dict:
@@ -346,6 +383,7 @@ async def process_incoming_message(
             milestones=milestones,
             client_question=message or "Hello",
             media_url=media_url,
+            allowed_repos=[project.github_repo] if project and project.github_repo else [],
         )
 
         reply = ai_result.get("response", "")

@@ -214,13 +214,15 @@ class OpenAIProvider(AIProvider):
         openai_tools = [tool.to_openai_schema() for tool in tools]
         openai_messages = _to_openai_messages(messages, system_prompt)
 
+        # An empty tools list is rejected by the API, so only send tools when there are any.
+        tool_kwargs = {"tools": openai_tools, "tool_choice": "auto"} if openai_tools else {}
+
         try:
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=openai_messages,
-                tools=openai_tools,
-                tool_choice="auto", 
-                max_tokens=max_tokens
+                max_tokens=max_tokens,
+                **tool_kwargs,
             )
             
             return _to_provider_response(response)
