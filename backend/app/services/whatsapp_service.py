@@ -9,6 +9,7 @@ Every caller uses send_whatsapp_message(); none of them know which is active.
 
 import logging
 import re
+from urllib.parse import quote
 
 import httpx
 
@@ -44,6 +45,24 @@ def waha_chat_id_to_phone(chat_id: str) -> str | None:
     """'919729041423@c.us' -> '+919729041423'. Returns None for groups/@lid/status ids."""
     match = re.fullmatch(r"(\d{6,15})@c\.us", chat_id or "")
     return f"+{match.group(1)}" if match else None
+
+
+async def resolve_waha_lid(lid: str) -> str | None:
+    """Map a WhatsApp '<id>@lid' (privacy id) to '+<phone>' via WAHA, or None if unknown.
+
+    WhatsApp increasingly delivers senders as @lid instead of a phone number.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as http:
+            resp = await http.get(
+                f"{settings.WAHA_URL.rstrip('/')}/api/{settings.WAHA_SESSION}/lids/{quote(lid, safe='')}",
+                headers=_waha_headers(),
+            )
+            resp.raise_for_status()
+            return waha_chat_id_to_phone(resp.json().get("pn") or "")
+    except Exception as e:
+        logger.warning(f"Could not resolve WhatsApp lid: {e}")
+        return None
 
 
 def _waha_headers() -> dict:
