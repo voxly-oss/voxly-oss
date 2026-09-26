@@ -124,22 +124,38 @@ def _to_provider_response(response):
     )()
 
 class OpenAIProvider(AIProvider):
-    """OpenAI (GPT-4) provider."""
-    
+    """OpenAI (GPT-4) provider.
+
+    Any OpenAI-compatible API (Groq, Together, a self-hosted vLLM/Ollama) is
+    a subclass that overrides the class attributes below.
+    """
+
+    provider_id = "openai"
+    display_name = "OpenAI"
+    key_setting = "OPENAI_API_KEY"
+    base_url: Optional[str] = None
+
+    def _configured_model(self) -> str:
+        return "gpt-4o"
+
     def __init__(self, api_key: str = None):
         super().__init__(api_key)
-        key = api_key or settings.OPENAI_API_KEY
+        key = api_key or getattr(settings, self.key_setting)
         if not key:
-            raise ValueError("OpenAI API Key is missing. Please set OPENAI_API_KEY.")
-        self.client = AsyncOpenAI(api_key=key)
+            raise ValueError(f"{self.display_name} API Key is missing. Please set {self.key_setting}.")
+        self.model = self._configured_model()
+        kwargs = {"api_key": key}
+        if self.base_url:
+            kwargs["base_url"] = self.base_url
+        self.client = AsyncOpenAI(**kwargs)
 
     @property
     def provider_name(self) -> str:
-        return "OpenAI"
+        return self.display_name
 
     @property
     def default_model(self) -> str:
-        return "gpt-4o"
+        return self.model
 
     async def generate_response(
         self,
@@ -153,7 +169,7 @@ class OpenAIProvider(AIProvider):
             full_system_prompt = f"{system_prompt}\n\nContext:\n{context}"
             
             response = await self.client.chat.completions.create(
-                model="gpt-4o",
+                model=self.model,
                 messages=[
                     {"role": "system", "content": full_system_prompt},
                     {"role": "user", "content": message}
@@ -168,8 +184,8 @@ class OpenAIProvider(AIProvider):
             return AIResponse(
                 response=content,
                 tokens_used=(usage.prompt_tokens + usage.completion_tokens) if usage else 0,
-                model="gpt-4o",
-                provider="openai",
+                model=self.model,
+                provider=self.provider_id,
                 success=True
             )
             
@@ -179,7 +195,7 @@ class OpenAIProvider(AIProvider):
                 response="Error generating response.",
                 tokens_used=0,
                 model="error",
-                provider="openai",
+                provider=self.provider_id,
                 success=False,
                 error=str(e)
             )
@@ -200,7 +216,7 @@ class OpenAIProvider(AIProvider):
 
         try:
             response = await self.client.chat.completions.create(
-                model="gpt-4o",
+                model=self.model,
                 messages=openai_messages,
                 tools=openai_tools,
                 tool_choice="auto", 
