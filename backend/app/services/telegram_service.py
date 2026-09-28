@@ -39,6 +39,15 @@ async def send_telegram_message(chat_id: str | int, text: str) -> bool:
                     "parse_mode": "Markdown",
                 },
             )
+            # Telegram's legacy Markdown rejects text with unbalanced markers (a lone "_" in a
+            # project name, stray "*"), and the reply would silently never arrive. Resend it as
+            # plain text instead.
+            if resp.status_code == 400 and "parse entities" in resp.text:
+                logger.warning("Telegram rejected Markdown; resending as plain text")
+                resp = await client.post(
+                    _bot_url("sendMessage"),
+                    json={"chat_id": str(chat_id), "text": text},
+                )
             if resp.status_code == 200:
                 logger.info(f"Telegram message sent to chat {str(chat_id)[:4]}***")
                 return True
