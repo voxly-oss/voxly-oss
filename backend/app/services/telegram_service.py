@@ -3,7 +3,9 @@ Telegram Service — Send messages via the Telegram Bot API.
 
 Uses httpx async — no extra dependencies needed (already in requirements).
 """
+import html
 import logging
+import re
 
 import httpx
 
@@ -18,13 +20,57 @@ def _bot_url(method: str) -> str:
     return f"{_BASE_URL}/bot{settings.TELEGRAM_BOT_TOKEN}/{method}"
 
 
+_FENCE_RE = re.compile(r"```[^\n`]*\n?(.*?)```", re.DOTALL)
+_INLINE_CODE_RE = re.compile(r"`([^`\n]+)`")
+_TABLE_SEPARATOR_RE = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$")
+_HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$")
+_BOLD_RE = re.compile(r"\*\*(?=\S)(.+?)(?<=\S)\*\*")
+
+
+def markdown_to_telegram_html(text: str) -> str:
+    """Convert the LLM's GitHub-style Markdown into Telegram-safe HTML.
+
+    Telegram's legacy Markdown mode silently eats paired "_" (so "Vak_test" loses its
+    underscore), shows "**" literally, and has no tables. HTML mode only treats <, > and & as
+    special, so after escaping those, the text arrives exactly as written. Only bold, code and
+    headings are kept as formatting; table rows become plain lines.
+    """
+    stash: list[str] = []
+
+    def _keep(fragment: str) -> str:
+        stash.append(fragment)
+        return f"\x00{len(stash) - 1}\x00"
+
+    text = _FENCE_RE.sub(lambda m: _keep(f"<pre>{html.escape(m.group(1).strip(), quote=False)}</pre>"), text)
+    text = _INLINE_CODE_RE.sub(lambda m: _keep(f"<code>{html.escape(m.group(1), quote=False)}</code>"), text)
+
+    lines = []
+    for line in text.split("\n"):
+        if _TABLE_SEPARATOR_RE.match(line):
+            continue
+        stripped = line.strip()
+        if stripped.startswith("|") and stripped.endswith("|") and len(stripped) > 1:
+            cells = [c.strip() for c in stripped.strip("|").split("|")]
+            line = " — ".join(c for c in cells if c)
+        else:
+            heading = _HEADING_RE.match(line)
+            if heading:
+                line = f"**{heading.group(1)}**"
+        lines.append(line)
+    text = "\n".join(lines)
+
+    text = html.escape(text, quote=False)
+    text = _BOLD_RE.sub(r"<b>\1</b>", text)
+    return re.sub(r"\x00(\d+)\x00", lambda m: stash[int(m.group(1))], text)
+
+
 async def send_telegram_message(chat_id: str | int, text: str) -> bool:
     """
-    Send a plain text message to a Telegram chat.
+    Send a message to a Telegram chat.
 
     Args:
         chat_id: Telegram chat ID (numeric string or int)
-        text: Message text (Markdown supported)
+        text: Message text (GitHub-style Markdown is converted to Telegram HTML)
 
     Returns:
         True if sent successfully
@@ -35,15 +81,14 @@ async def send_telegram_message(chat_id: str | int, text: str) -> bool:
                 _bot_url("sendMessage"),
                 json={
                     "chat_id": str(chat_id),
-                    "text": text,
-                    "parse_mode": "Markdown",
+                    "text": markdown_to_telegram_html(text),
+                    "parse_mode": "HTML",
                 },
             )
-            # Telegram's legacy Markdown rejects text with unbalanced markers (a lone "_" in a
-            # project name, stray "*"), and the reply would silently never arrive. Resend it as
-            # plain text instead.
+            # Safety net: if Telegram still can't parse the converted HTML, the reply would
+            # silently never arrive. Resend the original text with no formatting instead.
             if resp.status_code == 400 and "parse entities" in resp.text:
-                logger.warning("Telegram rejected Markdown; resending as plain text")
+                logger.warning("Telegram rejected formatted message; resending as plain text")
                 resp = await client.post(
                     _bot_url("sendMessage"),
                     json={"chat_id": str(chat_id), "text": text},
@@ -68,8 +113,8 @@ async def send_telegram_photo(chat_id: str | int, photo_url: str, caption: str =
                 json={
                     "chat_id": str(chat_id),
                     "photo": photo_url,
-                    "caption": caption,
-                    "parse_mode": "Markdown",
+                    "caption": markdown_to_telegram_html(caption),
+                    "parse_mode": "HTML",
                 },
             )
             return resp.status_code == 200
