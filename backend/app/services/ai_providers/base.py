@@ -51,11 +51,16 @@ Language matching:
 
 
 def _github_section(github_stats: Dict) -> str:
-    # A failed fetch comes back as zeros plus an "error" key, and a project with no repo (or a
-    # fetch that raised) comes back as {}. Presenting either as real numbers made the assistant
-    # tell clients their project had "no activity, 0% progress". The raw error text stays out of
-    # the prompt: the model could echo it to the client.
-    if not github_stats or github_stats.get("error"):
+    # A project with no repo comes back as {}, and a failed fetch as zeros plus an "error" key.
+    # Presenting either as real numbers made the assistant tell clients their project had
+    # "no activity, 0% progress". The raw error text stays out of the prompt: the model could
+    # echo it to the client.
+    if not github_stats:
+        return (
+            "GitHub Statistics: this project has no code repository linked. Base the update on\n"
+            "the milestones only, and do not mention GitHub, commits or repository data."
+        )
+    if github_stats.get("error"):
         return (
             "GitHub Statistics: UNAVAILABLE right now. Do not state any commit, issue or progress\n"
             "numbers, and do not say the project has no activity."

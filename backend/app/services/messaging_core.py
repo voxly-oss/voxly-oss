@@ -100,7 +100,8 @@ async def _get_project_github_stats(project: Optional[Project]) -> dict:
     try:
         return await get_github_stats_cached(str(project.id), project.github_repo)
     except Exception:
-        return {}
+        # {} means "no repo linked"; a repo we failed to read must be reported as a failure.
+        return {"error": "GitHub stats fetch failed"}
 
 
 def _serialize_project_milestones(db: Session, project: Optional[Project]) -> list[dict]:

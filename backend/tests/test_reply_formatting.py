@@ -40,10 +40,37 @@ def test_failed_fetch_is_marked_unavailable_not_shown_as_zeros():
     assert "Bad credentials" not in ctx  # raw error must not reach the model
 
 
-def test_missing_stats_are_marked_unavailable():
+def test_project_without_repo_does_not_promise_repo_data():
     ctx = _context({})
-    assert "UNAVAILABLE" in ctx
+    assert "no code repository linked" in ctx
+    assert "UNAVAILABLE" not in ctx
     assert "Total commits" not in ctx
+
+
+@pytest.mark.asyncio
+async def test_stats_lookup_that_raises_is_reported_as_failure(monkeypatch):
+    from types import SimpleNamespace
+
+    from app.services import messaging_core
+
+    async def _boom(project_id, repo_name):
+        raise RuntimeError("redis exploded")
+
+    monkeypatch.setattr(messaging_core, "get_github_stats_cached", _boom)
+    project = SimpleNamespace(id="p1", github_repo="owner/repo")
+    stats = await messaging_core._get_project_github_stats(project)
+    assert stats.get("error")
+    assert "UNAVAILABLE" in _context(stats)
+
+
+@pytest.mark.asyncio
+async def test_project_without_repo_gets_empty_stats():
+    from types import SimpleNamespace
+
+    from app.services import messaging_core
+
+    project = SimpleNamespace(id="p1", github_repo=None)
+    assert await messaging_core._get_project_github_stats(project) == {}
 
 
 def test_real_stats_are_shown():
