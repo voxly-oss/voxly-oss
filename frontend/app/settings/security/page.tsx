@@ -5,14 +5,15 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useToast } from '@/hooks/use-toast';
-import { authAPI } from '@/lib/api';
+import { authAPI, getApiErrorMessage } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Loader2 } from 'lucide-react';
 import SettingsShell from '@/components/SettingsShell';
-import { SettingsRow, Toggle, ValueButton } from '@/components/SettingsRow';
-import { Panel, PanelRow, PanelText } from '@/components/SidePanel';
+import { SettingsRow, StatusPill } from '@/components/SettingsRow';
+import { HelpLinks, Panel, PanelRow, PanelText } from '@/components/SidePanel';
+import FieldError from '@/components/FieldError';
 
 const passwordSchema = z.object({
     current_password: z.string().min(1, 'Current password is required'),
@@ -27,15 +28,12 @@ const passwordSchema = z.object({
 });
 type PasswordFormData = z.infer<typeof passwordSchema>;
 
-// SSO / 2FA-enforcement / webhook-signing / IP-allowlist policy rows have no
-// backend endpoint yet (single-account app, no workspace-level security
-// policy model) — local-only, not persisted.
+// SSO / 2FA / IP-allowlist / rotation-reminder policies have no backend model
+// yet (single-account app). They used to render as disabled toggles — one of
+// them *checked*, reading as "2FA enforced" — so they now state their real
+// status. Webhook signing is genuinely on (GitHub + Twilio HMAC verification).
 export default function SecuritySettingsPage() {
     const { toast } = useToast();
-    const [enforce2FA, setEnforce2FA] = useState(true);
-    const [requireAll2FA, setRequireAll2FA] = useState(false);
-    const [webhookSigning, setWebhookSigning] = useState(true);
-    const [ipAllowlist, setIpAllowlist] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
 
     const { register, handleSubmit, formState: { errors }, reset } = useForm<PasswordFormData>({ resolver: zodResolver(passwordSchema) });
@@ -46,9 +44,8 @@ export default function SecuritySettingsPage() {
             await authAPI.changePassword({ current_password: data.current_password, new_password: data.new_password });
             toast({ title: 'Password changed', description: 'Your password has been changed successfully.' });
             reset();
-        } catch (err: any) {
-            const detail = err.response?.data?.detail;
-            toast({ title: 'Error', description: typeof detail === 'string' ? detail : 'Failed to change password.', variant: 'destructive' });
+        } catch (err) {
+            toast({ title: 'Couldn’t change password', description: getApiErrorMessage(err, 'Please try again.'), variant: 'destructive' });
         } finally {
             setIsSaving(false);
         }
@@ -64,25 +61,20 @@ export default function SecuritySettingsPage() {
                     </div>
 
                     <div className="border border-border rounded-[14px] bg-card overflow-hidden">
-                        <SettingsRow label="Single sign-on (SSO)" description="Not available yet — Google and GitHub OAuth are supported for personal login today.">
-                            <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold rounded-full pl-1.5 pr-2 py-[3px] bg-voxly-surface-3 text-voxly-ink-6">
-                                <span className="w-[5px] h-[5px] rounded-full bg-voxly-ink-5" />Not available
-                            </span>
-                        </SettingsRow>
-                        <SettingsRow label="Enforce 2FA for Owner & Admin" description="Not available yet — this account has no 2FA/TOTP support.">
-                            <Toggle checked={enforce2FA} onChange={setEnforce2FA} disabled />
-                        </SettingsRow>
-                        <SettingsRow label="Require 2FA for all members">
-                            <Toggle checked={requireAll2FA} onChange={setRequireAll2FA} disabled />
-                        </SettingsRow>
                         <SettingsRow label="Webhook signing" description="Incoming GitHub and Twilio webhooks are signature-verified.">
-                            <Toggle checked={webhookSigning} onChange={setWebhookSigning} disabled />
+                            <StatusPill tone="success">Enabled</StatusPill>
+                        </SettingsRow>
+                        <SettingsRow label="Single sign-on (SSO)" description="Google and GitHub OAuth are supported for personal login today.">
+                            <StatusPill />
+                        </SettingsRow>
+                        <SettingsRow label="Two-factor authentication (2FA)" description="TOTP 2FA and team-wide enforcement.">
+                            <StatusPill />
                         </SettingsRow>
                         <SettingsRow label="API key rotation reminder">
-                            <ValueButton>90 days</ValueButton>
+                            <StatusPill />
                         </SettingsRow>
-                        <SettingsRow label="IP allowlist" description="Not available yet — restrict API and dashboard access to approved IP ranges.">
-                            <Toggle checked={ipAllowlist} onChange={setIpAllowlist} disabled />
+                        <SettingsRow label="IP allowlist" description="Restrict API and dashboard access to approved IP ranges.">
+                            <StatusPill />
                         </SettingsRow>
                     </div>
 
@@ -91,23 +83,27 @@ export default function SecuritySettingsPage() {
                     <div>
                         <h2 className="font-display font-semibold text-[15px] text-foreground">Account Password</h2>
                     </div>
-                    <form onSubmit={handleSubmit(onSubmit)} className="border border-border rounded-[14px] bg-card p-[18px] flex flex-col gap-4 max-w-md">
+                    <form onSubmit={handleSubmit(onSubmit)} className="border border-border rounded-[14px] bg-card p-[18px] flex flex-col gap-4 max-w-md" noValidate>
                         <div className="space-y-1.5">
                             <Label htmlFor="current_password" className="text-voxly-ink-6 text-xs">Current password</Label>
-                            <Input id="current_password" type="password" {...register('current_password')} className="bg-background border-voxly-ink-4" />
-                            {errors.current_password && <p className="text-xs text-voxly-heat">{errors.current_password.message}</p>}
+                            <Input id="current_password" type="password" autoComplete="current-password" aria-invalid={!!errors.current_password} aria-describedby={errors.current_password ? 'current_password-error' : undefined} {...register('current_password')} />
+                            <FieldError id="current_password-error" message={errors.current_password?.message} />
                         </div>
                         <div className="space-y-1.5">
                             <Label htmlFor="new_password" className="text-voxly-ink-6 text-xs">New password</Label>
-                            <Input id="new_password" type="password" {...register('new_password')} className="bg-background border-voxly-ink-4" />
-                            {errors.new_password && <p className="text-xs text-voxly-heat">{errors.new_password.message}</p>}
+                            <Input id="new_password" type="password" autoComplete="new-password" aria-invalid={!!errors.new_password} aria-describedby={errors.new_password ? 'new_password-error' : 'new_password-hint'} {...register('new_password')} />
+                            {errors.new_password ? (
+                                <FieldError id="new_password-error" message={errors.new_password.message} />
+                            ) : (
+                                <p id="new_password-hint" className="text-[11.5px] text-voxly-ink-5">At least 8 characters, with an uppercase letter, a lowercase letter and a digit.</p>
+                            )}
                         </div>
                         <div className="space-y-1.5">
                             <Label htmlFor="confirm_password" className="text-voxly-ink-6 text-xs">Confirm new password</Label>
-                            <Input id="confirm_password" type="password" {...register('confirm_password')} className="bg-background border-voxly-ink-4" />
-                            {errors.confirm_password && <p className="text-xs text-voxly-heat">{errors.confirm_password.message}</p>}
+                            <Input id="confirm_password" type="password" autoComplete="new-password" aria-invalid={!!errors.confirm_password} aria-describedby={errors.confirm_password ? 'confirm_password-error' : undefined} {...register('confirm_password')} />
+                            <FieldError id="confirm_password-error" message={errors.confirm_password?.message} />
                         </div>
-                        <Button type="submit" disabled={isSaving} className="bg-secondary hover:bg-accent text-foreground border border-border">
+                        <Button type="submit" variant="outline" disabled={isSaving} className="font-semibold">
                             {isSaving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
                             Update password
                         </Button>
@@ -123,9 +119,7 @@ export default function SecuritySettingsPage() {
                         <PanelText>No recent changes.</PanelText>
                     </Panel>
                     <Panel title="Need Help?" defaultOpen={false}>
-                        <PanelText>
-                            <a href="#">Settings documentation →</a><br /><a href="#">Contact support →</a>
-                        </PanelText>
+                        <HelpLinks />
                     </Panel>
                 </div>
             </div>

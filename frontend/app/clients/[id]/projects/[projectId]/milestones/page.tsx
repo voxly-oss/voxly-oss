@@ -6,10 +6,15 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
-import { clientsAPI, projectsAPI, milestonesAPI, chatAPI, channelsAPI } from '@/lib/api';
+import { clientsAPI, projectsAPI, milestonesAPI, chatAPI, channelsAPI, getApiErrorMessage } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { NativeSelect } from '@/components/ui/native-select';
+import FieldError from '@/components/FieldError';
+import ConfirmDialog from '@/components/ConfirmDialog';
+import StatusBadge from '@/components/StatusBadge';
 import {
     Dialog,
     DialogContent,
@@ -24,19 +29,34 @@ import {
     FileText, Clock, AlertTriangle, Trash2, Pencil, CheckCircle2,
 } from 'lucide-react';
 import Link from 'next/link';
-import { formatDate } from '@/lib/utils';
+import { formatDate, nullIfBlank, undefinedIfBlank } from '@/lib/utils';
 import type { Client, Project, Milestone, ChatMessage, ChannelActivity } from '@/types';
 import { Panel, PanelRow, PanelText } from '@/components/SidePanel';
 import { PreviewBanner, PreviewMark } from '@/components/PreviewBadge';
 
+const MILESTONE_STATUSES = ['pending', 'in_progress', 'completed', 'blocked'] as const;
+
+// progress is registered with valueAsNumber — before, <input type="number">
+// handed zod a string, z.number() rejected it, and with no error rendered
+// Save silently did nothing whenever progress had been touched.
 const milestoneSchema = z.object({
-    title: z.string().min(1, 'Title is required'),
-    description: z.string().optional(),
-    status: z.string().optional(),
-    progress: z.number().min(0).max(100).optional().default(0),
-    due_date: z.string().optional(),
+    title: z
+        .string()
+        .refine((v) => v.trim().length > 0, 'Title is required')
+        .refine((v) => v.trim().length <= 255, 'Keep the title under 255 characters'),
+    description: z.string(),
+    status: z.enum(MILESTONE_STATUSES),
+    progress: z
+        .number({ error: 'Enter a number from 0 to 100' })
+        .int('Use a whole number')
+        .min(0, 'Progress can’t be below 0')
+        .max(100, 'Progress can’t be above 100'),
+    due_date: z.string(),
 });
 type MilestoneFormData = z.infer<typeof milestoneSchema>;
+
+const EMPTY_MILESTONE: MilestoneFormData = { title: '', description: '', status: 'pending', progress: 0, due_date: '' };
+const LABEL = 'text-[12.5px] font-medium text-voxly-ink-6';
 
 const MILESTONE_STATUS_STYLE: Record<string, string> = {
     pending: 'bg-voxly-surface-3 text-voxly-ink-6',
@@ -71,6 +91,7 @@ export default function MilestonesPage() {
 
     const [milestoneDialogOpen, setMilestoneDialogOpen] = useState(false);
     const [editingMilestone, setEditingMilestone] = useState<Milestone | null>(null);
+    const [milestoneToDelete, setMilestoneToDelete] = useState<Milestone | null>(null);
 
     const { data: client } = useQuery({
         queryKey: ['client', clientId],
@@ -106,46 +127,72 @@ export default function MilestonesPage() {
     const clientChannels = channelActivity.filter(a => a.client_id === clientId);
 
     const milestoneForm = useForm<MilestoneFormData>({
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        resolver: zodResolver(milestoneSchema) as any,
-        defaultValues: { status: 'pending', progress: 0 },
+        resolver: zodResolver(milestoneSchema),
+        defaultValues: EMPTY_MILESTONE,
     });
+    const milestoneErrors = milestoneForm.formState.errors;
 
+    // Blank description / due date: omitted on create, null on update (the
+    // API rejects "" for Optional[date], which failed every create without a
+    // due date).
     const createMilestoneMutation = useMutation({
-        mutationFn: (data: MilestoneFormData) => milestonesAPI.create({ ...data, project_id: projectId }),
+        mutationFn: (data: MilestoneFormData) =>
+            milestonesAPI.create({
+                project_id: projectId,
+                title: data.title.trim(),
+                description: undefinedIfBlank(data.description),
+                status: data.status,
+                progress: data.progress,
+                due_date: undefinedIfBlank(data.due_date),
+            }),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['milestones', { project_id: projectId }] });
             toast({ title: 'Milestone created' });
             setMilestoneDialogOpen(false);
-            milestoneForm.reset({ status: 'pending', progress: 0 });
+            milestoneForm.reset(EMPTY_MILESTONE);
         },
-        onError: () => toast({ variant: 'destructive', title: 'Failed to create milestone' }),
+        onError: (err) => toast({ variant: 'destructive', title: 'Couldn’t create milestone', description: getApiErrorMessage(err, 'Please try again.') }),
     });
 
     const updateMilestoneMutation = useMutation({
-        mutationFn: ({ id, data }: { id: string; data: MilestoneFormData }) => milestonesAPI.update(id, data),
+        mutationFn: ({ id, data }: { id: string; data: MilestoneFormData }) =>
+            milestonesAPI.update(id, {
+                title: data.title.trim(),
+                description: nullIfBlank(data.description),
+                status: data.status,
+                progress: data.progress,
+                due_date: nullIfBlank(data.due_date),
+            }),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['milestones', { project_id: projectId }] });
             toast({ title: 'Milestone updated' });
             setEditingMilestone(null);
             setMilestoneDialogOpen(false);
-            milestoneForm.reset({ status: 'pending', progress: 0 });
+            milestoneForm.reset(EMPTY_MILESTONE);
         },
-        onError: () => toast({ variant: 'destructive', title: 'Failed to update milestone' }),
+        onError: (err) => toast({ variant: 'destructive', title: 'Couldn’t update milestone', description: getApiErrorMessage(err, 'Please try again.') }),
     });
 
     const deleteMilestoneMutation = useMutation({
         mutationFn: (id: string) => milestonesAPI.delete(id),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['milestones', { project_id: projectId }] });
-            toast({ title: 'Milestone deleted' });
+            toast({ title: 'Milestone deleted', description: milestoneToDelete?.title });
+            setMilestoneToDelete(null);
         },
-        onError: () => toast({ variant: 'destructive', title: 'Failed to delete milestone' }),
+        onError: (err) => toast({ variant: 'destructive', title: 'Couldn’t delete milestone', description: getApiErrorMessage(err, 'Please try again.') }),
     });
+    const isSaving = createMilestoneMutation.isPending || updateMilestoneMutation.isPending;
 
     const overallProgress = milestones.length > 0
         ? Math.round(milestones.reduce((acc, m) => acc + m.progress, 0) / milestones.length)
         : 0;
+
+    const openCreateDialog = () => {
+        setEditingMilestone(null);
+        milestoneForm.reset(EMPTY_MILESTONE);
+        setMilestoneDialogOpen(true);
+    };
 
     const openEditDialog = (milestone: Milestone) => {
         setEditingMilestone(milestone);
@@ -160,9 +207,10 @@ export default function MilestonesPage() {
     };
 
     const closeDialog = () => {
+        if (isSaving) return;
         setMilestoneDialogOpen(false);
         setEditingMilestone(null);
-        milestoneForm.reset({ status: 'pending', progress: 0 });
+        milestoneForm.reset(EMPTY_MILESTONE);
     };
 
     const handleSubmit = (data: MilestoneFormData) => {
@@ -225,9 +273,7 @@ export default function MilestonesPage() {
                         <div className="min-w-0">
                             <div className="flex items-center gap-2.5 flex-wrap">
                                 <span className="font-display font-bold text-2xl text-foreground tracking-[-0.01em] truncate">{project.name}</span>
-                                <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold rounded-full pl-1.5 pr-2.5 py-[3px] bg-voxly-success-soft text-voxly-success flex-none">
-                                    <span className="w-[5px] h-[5px] rounded-full bg-voxly-success" />{project.status}
-                                </span>
+                                <StatusBadge status={project.status} className="flex-none" />
                                 {stats && (
                                     <span className="inline-flex items-center gap-1 text-[11px] text-voxly-ink-5 flex-none">GITHUB<b className="font-display font-bold text-[13px] text-voxly-success">{stats.progress_percent}%</b></span>
                                 )}
@@ -242,7 +288,7 @@ export default function MilestonesPage() {
                         </div>
                     </div>
                     <div className="flex items-center gap-2 flex-none">
-                        <Link href="/messages" className="font-semibold text-[13px] bg-secondary hover:bg-accent text-foreground border border-voxly-ink-4 rounded-lg px-3.5 py-2 transition-colors whitespace-nowrap">
+                        <Link href={`/messages?client=${clientId}`} className="font-semibold text-[13px] bg-secondary hover:bg-accent text-foreground border border-voxly-ink-4 rounded-lg px-3.5 py-2 transition-colors whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                             Message
                         </Link>
                         {project.github_repo && (
@@ -318,8 +364,8 @@ export default function MilestonesPage() {
                 {/* Milestones — real, fully functional CRUD */}
                 <div className="flex items-center justify-between">
                     <span className="font-display font-semibold text-[15px] text-foreground">Milestones</span>
-                    <Button onClick={() => setMilestoneDialogOpen(true)} className="bg-primary hover:bg-primary/90 text-primary-foreground font-semibold text-[13px] rounded-lg px-3.5 py-2 h-auto gap-1.5">
-                        <Plus className="w-3.5 h-3.5" /> Add Milestone
+                    <Button onClick={openCreateDialog} className="font-semibold text-[13px] rounded-lg px-3.5 py-2 h-auto gap-1.5">
+                        <Plus className="w-3.5 h-3.5" /> Add milestone
                     </Button>
                 </div>
                 <div className="border border-border rounded-[14px] bg-card overflow-hidden">
@@ -330,7 +376,7 @@ export default function MilestonesPage() {
                             <CheckCircle2 className="w-10 h-10 mx-auto text-voxly-ink-5 mb-3" />
                             <h3 className="font-semibold text-foreground mb-1">No milestones yet</h3>
                             <p className="text-voxly-ink-5 text-sm mb-4">Add milestones to track project progress</p>
-                            <Button onClick={() => setMilestoneDialogOpen(true)} className="bg-primary hover:bg-primary/90 text-primary-foreground"><Plus className="w-4 h-4 mr-2" />Add Milestone</Button>
+                            <Button onClick={openCreateDialog} className="font-semibold"><Plus className="w-4 h-4 mr-2" />Add milestone</Button>
                         </div>
                     ) : (
                         milestones.map(milestone => (
@@ -339,7 +385,7 @@ export default function MilestonesPage() {
                                     <div className="flex-1 min-w-0">
                                         <div className="flex items-center gap-2.5 mb-1.5 flex-wrap">
                                             <h3 className="font-semibold text-foreground text-sm">{milestone.title}</h3>
-                                            <span className={`text-[10.5px] font-semibold rounded-full px-2 py-0.5 ${MILESTONE_STATUS_STYLE[milestone.status] ?? MILESTONE_STATUS_STYLE.pending}`}>
+                                            <span className={`text-[10.5px] font-semibold rounded-full px-2 py-0.5 capitalize ${MILESTONE_STATUS_STYLE[milestone.status] ?? MILESTONE_STATUS_STYLE.pending}`}>
                                                 {milestone.status.replace('_', ' ')}
                                             </span>
                                         </div>
@@ -348,16 +394,23 @@ export default function MilestonesPage() {
                                             <span className="text-voxly-ink-5">Progress</span>
                                             <span className="font-medium text-foreground">{milestone.progress}%</span>
                                         </div>
-                                        <div className="h-1.5 bg-secondary rounded-full overflow-hidden">
+                                        <div
+                                            className="h-1.5 bg-secondary rounded-full overflow-hidden"
+                                            role="progressbar"
+                                            aria-valuenow={milestone.progress}
+                                            aria-valuemin={0}
+                                            aria-valuemax={100}
+                                            aria-label={`${milestone.title} progress`}
+                                        >
                                             <div className="h-full rounded-full bg-primary" style={{ width: `${milestone.progress}%` }} />
                                         </div>
                                         {milestone.due_date && <p className="text-[11px] text-voxly-ink-5 mt-2">Due: {formatDate(milestone.due_date)}</p>}
                                     </div>
                                     <div className="flex gap-1 flex-none">
-                                        <Button variant="ghost" size="icon" className="w-8 h-8 text-voxly-ink-5 hover:text-foreground" onClick={() => openEditDialog(milestone)}>
+                                        <Button variant="ghost" size="icon" className="w-8 h-8 text-voxly-ink-5 hover:text-foreground" onClick={() => openEditDialog(milestone)} aria-label={`Edit ${milestone.title}`}>
                                             <Pencil className="w-3.5 h-3.5" />
                                         </Button>
-                                        <Button variant="ghost" size="icon" className="w-8 h-8 text-voxly-ink-5 hover:text-voxly-heat" onClick={() => deleteMilestoneMutation.mutate(milestone.id)}>
+                                        <Button variant="ghost" size="icon" className="w-8 h-8 text-voxly-ink-5 hover:text-voxly-heat hover:bg-voxly-heat-soft" onClick={() => setMilestoneToDelete(milestone)} aria-label={`Delete ${milestone.title}`}>
                                             <Trash2 className="w-3.5 h-3.5" />
                                         </Button>
                                     </div>
@@ -456,53 +509,81 @@ export default function MilestonesPage() {
                 </Panel>
             </div>
 
-            {/* Add/Edit milestone dialog — unchanged real logic */}
-            <Dialog open={milestoneDialogOpen} onOpenChange={closeDialog}>
-                <DialogContent className="bg-card border-border">
+            <Dialog open={milestoneDialogOpen} onOpenChange={(open) => { if (!open) closeDialog(); }}>
+                <DialogContent>
                     <DialogHeader>
-                        <DialogTitle className="text-foreground">{editingMilestone ? 'Edit Milestone' : 'Add New Milestone'}</DialogTitle>
+                        <DialogTitle>{editingMilestone ? 'Edit milestone' : 'New milestone'}</DialogTitle>
                         <DialogDescription className="text-voxly-ink-6">
-                            {editingMilestone ? 'Update milestone details' : 'Create a milestone to track progress'}
+                            {editingMilestone ? 'Update the milestone’s details and progress.' : `Break ${project.name} into a trackable step.`}
                         </DialogDescription>
                     </DialogHeader>
-                    <form onSubmit={milestoneForm.handleSubmit(handleSubmit)} className="space-y-4">
-                        <div className="space-y-2">
-                            <Label htmlFor="milestone-title">Title *</Label>
-                            <Input id="milestone-title" placeholder="e.g., Backend API Complete" className="bg-background border-voxly-ink-4" {...milestoneForm.register('title')} />
+                    <form onSubmit={milestoneForm.handleSubmit(handleSubmit)} className="space-y-4" noValidate>
+                        <div className="space-y-1.5">
+                            <Label htmlFor="milestone-title" className={LABEL}>Title *</Label>
+                            <Input
+                                id="milestone-title"
+                                placeholder="e.g. Backend API complete"
+                                autoFocus
+                                aria-invalid={!!milestoneErrors.title}
+                                aria-describedby={milestoneErrors.title ? 'milestone-title-error' : undefined}
+                                {...milestoneForm.register('title')}
+                            />
+                            <FieldError id="milestone-title-error" message={milestoneErrors.title?.message} />
                         </div>
-                        <div className="space-y-2">
-                            <Label htmlFor="milestone-description">Description</Label>
-                            <Input id="milestone-description" placeholder="Brief description..." className="bg-background border-voxly-ink-4" {...milestoneForm.register('description')} />
+                        <div className="space-y-1.5">
+                            <Label htmlFor="milestone-description" className={LABEL}>Description</Label>
+                            <Textarea id="milestone-description" rows={2} placeholder="What does done look like?" {...milestoneForm.register('description')} />
                         </div>
-                        <div className="grid grid-cols-2 gap-4">
-                            <div className="space-y-2">
-                                <Label htmlFor="milestone-status">Status</Label>
-                                <select id="milestone-status" className="w-full h-10 px-3 rounded-md border border-voxly-ink-4 bg-background text-foreground" {...milestoneForm.register('status')}>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div className="space-y-1.5">
+                                <Label htmlFor="milestone-status" className={LABEL}>Status</Label>
+                                <NativeSelect id="milestone-status" {...milestoneForm.register('status')}>
                                     <option value="pending">Pending</option>
-                                    <option value="in_progress">In Progress</option>
+                                    <option value="in_progress">In progress</option>
                                     <option value="completed">Completed</option>
                                     <option value="blocked">Blocked</option>
-                                </select>
+                                </NativeSelect>
                             </div>
-                            <div className="space-y-2">
-                                <Label htmlFor="milestone-progress">Progress (%)</Label>
-                                <Input id="milestone-progress" type="number" min="0" max="100" className="bg-background border-voxly-ink-4" {...milestoneForm.register('progress')} />
+                            <div className="space-y-1.5">
+                                <Label htmlFor="milestone-progress" className={LABEL}>Progress (%)</Label>
+                                <Input
+                                    id="milestone-progress"
+                                    type="number"
+                                    inputMode="numeric"
+                                    min={0}
+                                    max={100}
+                                    step={1}
+                                    aria-invalid={!!milestoneErrors.progress}
+                                    aria-describedby={milestoneErrors.progress ? 'milestone-progress-error' : undefined}
+                                    {...milestoneForm.register('progress', { valueAsNumber: true })}
+                                />
+                                <FieldError id="milestone-progress-error" message={milestoneErrors.progress?.message} />
                             </div>
                         </div>
-                        <div className="space-y-2">
-                            <Label htmlFor="milestone-due">Due Date</Label>
-                            <Input id="milestone-due" type="date" className="bg-background border-voxly-ink-4" {...milestoneForm.register('due_date')} />
+                        <div className="space-y-1.5">
+                            <Label htmlFor="milestone-due" className={LABEL}>Due date</Label>
+                            <Input id="milestone-due" type="date" {...milestoneForm.register('due_date')} />
                         </div>
-                        <DialogFooter>
-                            <Button type="button" variant="outline" onClick={closeDialog} className="border-border text-foreground hover:bg-accent">Cancel</Button>
-                            <Button type="submit" disabled={createMilestoneMutation.isPending || updateMilestoneMutation.isPending} className="bg-primary hover:bg-primary/90 text-primary-foreground">
-                                {(createMilestoneMutation.isPending || updateMilestoneMutation.isPending) && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                                {editingMilestone ? 'Update' : 'Create'} Milestone
+                        <DialogFooter className="pt-2">
+                            <Button type="button" variant="outline" onClick={closeDialog} disabled={isSaving}>Cancel</Button>
+                            <Button type="submit" disabled={isSaving} className="font-semibold">
+                                {isSaving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                                {editingMilestone ? 'Save changes' : 'Create milestone'}
                             </Button>
                         </DialogFooter>
                     </form>
                 </DialogContent>
             </Dialog>
+
+            <ConfirmDialog
+                open={!!milestoneToDelete}
+                onOpenChange={(open) => { if (!open) setMilestoneToDelete(null); }}
+                title="Delete milestone?"
+                description={<>&ldquo;{milestoneToDelete?.title}&rdquo; will be removed from {project.name}. This can&rsquo;t be undone.</>}
+                confirmLabel="Delete milestone"
+                pending={deleteMilestoneMutation.isPending}
+                onConfirm={() => milestoneToDelete && deleteMilestoneMutation.mutate(milestoneToDelete.id)}
+            />
         </div>
     );
 }

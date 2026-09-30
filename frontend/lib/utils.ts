@@ -5,6 +5,32 @@ export function cn(...inputs: ClassValue[]) {
     return twMerge(clsx(inputs));
 }
 
+/*
+ * Form → API payload helpers. An untouched <input> reports "" — but the API
+ * types optional fields strictly (Optional[date], Optional[EmailStr]) and
+ * rejects "" with a 422. Create payloads omit blanks; update payloads send
+ * null so a cleared field is actually cleared (update endpoints use
+ * exclude_unset, so omitting it would silently keep the old value).
+ */
+export function undefinedIfBlank(value: string | null | undefined): string | undefined {
+    const trimmed = value?.trim();
+    return trimmed ? trimmed : undefined;
+}
+
+export function nullIfBlank(value: string | null | undefined): string | null {
+    const trimmed = value?.trim();
+    return trimmed ? trimmed : null;
+}
+
+/** "owner/repo" from either that form or a pasted github.com URL. */
+export function normalizeGithubRepo(value: string | null | undefined): string {
+    return (value ?? '')
+        .trim()
+        .replace(/^(https?:\/\/)?(www\.)?github\.com\//i, '')
+        .replace(/\.git$/i, '')
+        .replace(/\/+$/, '');
+}
+
 export function formatDate(date: string | null): string {
     if (!date) return "—";
     return new Date(date).toLocaleDateString("en-US", {

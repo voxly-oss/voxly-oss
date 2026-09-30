@@ -2,25 +2,19 @@
 
 import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { clientsAPI, projectsAPI, channelsAPI } from '@/lib/api';
+import { clientsAPI, projectsAPI, channelsAPI, getApiErrorMessage } from '@/lib/api';
 import { Button } from '@/components/ui/button';
-import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle,
-} from '@/components/ui/dialog';
+import ConfirmDialog from '@/components/ConfirmDialog';
 import {
     DropdownMenu,
     DropdownMenuCheckboxItem,
     DropdownMenuContent,
     DropdownMenuItem,
+    DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useToast } from '@/hooks/use-toast';
-import { Plus, Search, MoreVertical, Pencil, Trash2, Users, Loader2, Filter, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, Search, MoreVertical, Pencil, Trash2, Users, Loader2, Filter, ChevronLeft, ChevronRight, MessageSquare } from 'lucide-react';
 import Link from 'next/link';
 import { formatPhone, getInitials } from '@/lib/utils';
 import type { Client, Project, ChannelActivity } from '@/types';
@@ -128,8 +122,8 @@ export default function ClientsListPage() {
             setDeleteDialogOpen(false);
             setClientToDelete(null);
         },
-        onError: () => {
-            toast({ variant: 'destructive', title: 'Error', description: 'Failed to delete client.' });
+        onError: (err) => {
+            toast({ variant: 'destructive', title: 'Couldn’t delete client', description: getApiErrorMessage(err, 'Please try again.') });
         },
     });
 
@@ -347,19 +341,25 @@ export default function ClientsListPage() {
                                         <div className={`text-[12px] ${bucket === 'risk' ? 'text-voxly-heat' : 'text-voxly-ink-5'}`}>{timeAgo(client.updated_at)}</div>
                                         <DropdownMenu>
                                             <DropdownMenuTrigger asChild>
-                                                <Button variant="ghost" size="icon" className="hover:bg-accent text-voxly-ink-5 hover:text-foreground w-7 h-7">
+                                                <Button variant="ghost" size="icon" className="hover:bg-accent text-voxly-ink-5 hover:text-foreground w-7 h-7" aria-label={`Actions for ${client.name}`}>
                                                     <MoreVertical className="w-4 h-4" />
                                                 </Button>
                                             </DropdownMenuTrigger>
-                                            <DropdownMenuContent align="end" className="bg-popover border-border">
-                                                <DropdownMenuItem asChild className="hover:bg-accent focus:bg-accent cursor-pointer">
-                                                    <Link href={`/clients/${client.id}`} className="text-voxly-ink-6">
-                                                        <Pencil className="w-4 h-4 mr-2" /> Edit
+                                            <DropdownMenuContent align="end">
+                                                <DropdownMenuItem asChild>
+                                                    <Link href={`/clients/${client.id}`}>
+                                                        <Pencil className="w-4 h-4 mr-2" /> Open &amp; edit
                                                     </Link>
                                                 </DropdownMenuItem>
+                                                <DropdownMenuItem asChild>
+                                                    <Link href={`/messages?client=${client.id}`}>
+                                                        <MessageSquare className="w-4 h-4 mr-2" /> Conversation
+                                                    </Link>
+                                                </DropdownMenuItem>
+                                                <DropdownMenuSeparator />
                                                 <DropdownMenuItem
-                                                    className="text-voxly-heat hover:bg-voxly-heat-soft focus:bg-voxly-heat-soft cursor-pointer"
-                                                    onClick={() => { setClientToDelete(client); setDeleteDialogOpen(true); }}
+                                                    className="text-voxly-heat focus:bg-voxly-heat-soft focus:text-voxly-heat"
+                                                    onSelect={() => { setClientToDelete(client); setDeleteDialogOpen(true); }}
                                                 >
                                                     <Trash2 className="w-4 h-4 mr-2" /> Delete
                                                 </DropdownMenuItem>
@@ -442,36 +442,24 @@ export default function ClientsListPage() {
                 </Panel>
             </div>
 
-            {/* Delete confirmation dialog */}
-            <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-                <DialogContent className="bg-card border-border">
-                    <DialogHeader>
-                        <DialogTitle className="text-foreground">Delete Client</DialogTitle>
-                        <DialogDescription className="text-voxly-ink-6">
-                            Are you sure you want to delete &quot;{clientToDelete?.name}&quot;?
-                            This will also delete all their projects and milestones. This
-                            action cannot be undone.
-                        </DialogDescription>
-                    </DialogHeader>
-                    <DialogFooter>
-                        <Button
-                            variant="outline"
-                            onClick={() => setDeleteDialogOpen(false)}
-                            className="border-border text-foreground hover:bg-accent"
-                        >
-                            Cancel
-                        </Button>
-                        <Button
-                            variant="destructive"
-                            onClick={() => clientToDelete && deleteMutation.mutate(clientToDelete.id)}
-                            disabled={deleteMutation.isPending}
-                        >
-                            {deleteMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
-                            Delete
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
+            <ConfirmDialog
+                open={deleteDialogOpen}
+                onOpenChange={setDeleteDialogOpen}
+                title="Delete client?"
+                description={(() => {
+                    const n = clientToDelete ? projectCountByClient.get(clientToDelete.id) ?? 0 : 0;
+                    return (
+                        <>
+                            &ldquo;{clientToDelete?.name}&rdquo; will be deleted
+                            {n > 0 ? <>, along with {n} {n === 1 ? 'project' : 'projects'} and their milestones</> : null}.
+                            This can&rsquo;t be undone.
+                        </>
+                    );
+                })()}
+                confirmLabel="Delete client"
+                pending={deleteMutation.isPending}
+                onConfirm={() => clientToDelete && deleteMutation.mutate(clientToDelete.id)}
+            />
         </div>
     );
 }

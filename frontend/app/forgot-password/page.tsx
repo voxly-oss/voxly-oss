@@ -5,7 +5,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import Link from 'next/link';
-import { authAPI } from '@/lib/api';
+import { authAPI, getApiErrorMessage } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -42,11 +42,11 @@ export default function ForgotPasswordPage() {
         title: 'Reset link sent',
         description: 'Check your email for instructions.',
       });
-    } catch (error: any) {
+    } catch (error) {
       toast({
         variant: 'destructive',
         title: 'Error',
-        description: error.response?.data?.detail || 'Failed to request password reset.',
+        description: getApiErrorMessage(error, 'Failed to request password reset.'),
       });
     } finally {
       setIsLoading(false);

@@ -20,7 +20,6 @@ import {
     FolderGit2,
     Settings,
     LogOut,
-    Bell,
     Search,
     Menu,
     X,
@@ -30,9 +29,21 @@ import {
     Radio,
 } from 'lucide-react';
 import { cn, getInitials } from '@/lib/utils';
-import { useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import VoxlyLogo from '@/components/VoxlyLogo';
+import CommandPalette from '@/components/CommandPalette';
+import NotificationBell from '@/components/NotificationBell';
+
+// Hydration-safe platform check for the shortcut hint (⌘K vs Ctrl K).
+const noopSubscribe = () => () => {};
+function useIsMac() {
+    return useSyncExternalStore(
+        noopSubscribe,
+        () => /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent),
+        () => true,
+    );
+}
 
 // Labels and order follow the v3 IA (Conversations, Channels, AI Agents) — routes unchanged.
 const navigation = [
@@ -55,9 +66,33 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
     const pathname = usePathname();
     const { user, logout } = useAuth();
     const [sidebarOpen, setSidebarOpen] = useState(false);
+    const [paletteOpen, setPaletteOpen] = useState(false);
+    const isMac = useIsMac();
+
+    // ⌘K / Ctrl+K opens the command palette from anywhere in the app;
+    // Esc closes the mobile sidebar (it had no keyboard exit at all).
+    useEffect(() => {
+        const onKeyDown = (e: KeyboardEvent) => {
+            if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+                e.preventDefault();
+                setPaletteOpen((open) => !open);
+            } else if (e.key === 'Escape') {
+                setSidebarOpen(false);
+            }
+        };
+        window.addEventListener('keydown', onKeyDown);
+        return () => window.removeEventListener('keydown', onKeyDown);
+    }, []);
 
     return (
         <div className="voxly-app-shell min-h-screen bg-background text-foreground">
+            <a
+                href="#main-content"
+                className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-[60] focus:rounded-lg focus:bg-primary focus:px-3 focus:py-2 focus:text-[13px] focus:font-semibold focus:text-primary-foreground"
+            >
+                Skip to content
+            </a>
+            <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
             {/* Mobile sidebar backdrop */}
             <AnimatePresence>
                 {sidebarOpen && (
@@ -86,7 +121,8 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
                         </Link>
                         <button
                             onClick={() => setSidebarOpen(false)}
-                            className="lg:hidden p-1.5 hover:bg-accent rounded-lg transition-colors"
+                            aria-label="Close navigation"
+                            className="lg:hidden p-1.5 hover:bg-accent rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         >
                             <X className="w-5 h-5 text-muted-foreground" />
                         </button>
@@ -141,7 +177,14 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
                                 {user?.agency_name || user?.email}
                             </p>
                         </div>
-                        <Settings className="w-3.5 h-3.5 text-voxly-ink-5 flex-none" />
+                        <Link
+                            href="/settings/general"
+                            onClick={() => setSidebarOpen(false)}
+                            aria-label="Settings"
+                            className="p-1.5 -m-1 rounded-md text-voxly-ink-5 hover:text-foreground hover:bg-accent transition-colors flex-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                            <Settings className="w-3.5 h-3.5" />
+                        </Link>
                     </div>
                 </div>
             </aside>
@@ -154,36 +197,47 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
                         {/* Mobile menu button */}
                         <button
                             onClick={() => setSidebarOpen(true)}
-                            className="lg:hidden p-2 hover:bg-accent rounded-lg transition-colors"
+                            aria-label="Open navigation"
+                            aria-expanded={sidebarOpen}
+                            className="lg:hidden p-2 hover:bg-accent rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         >
                             <Menu className="w-5 h-5 text-muted-foreground" />
                         </button>
 
-                        {/* Search */}
+                        {/* Search — opens the command palette (was an inert input) */}
                         <div className="flex-1 max-w-md hidden sm:block">
-                            <div className="relative group">
-                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-voxly-ink-5 group-focus-within:text-primary transition-colors" />
-                                <input
-                                    type="text"
-                                    placeholder="Search or ask Voxly anything…"
-                                    className="w-full h-9 pl-9 pr-12 text-[13px] bg-background border border-border rounded-lg text-foreground placeholder:text-voxly-ink-5 focus:outline-none focus:border-primary focus:ring-[3px] focus:ring-primary/15 transition-all"
-                                />
-                                <span className="absolute right-2.5 top-1/2 -translate-y-1/2 font-mono text-[10px] text-voxly-ink-6 bg-secondary px-1.5 py-0.5 rounded pointer-events-none">
-                                    ⌘K
-                                </span>
-                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setPaletteOpen(true)}
+                                aria-haspopup="dialog"
+                                aria-keyshortcuts={isMac ? 'Meta+K' : 'Control+K'}
+                                className="group relative w-full h-9 pl-9 pr-14 text-left text-[13px] bg-background border border-border rounded-lg text-voxly-ink-5 hover:border-voxly-ink-4 transition-colors focus-visible:outline-none focus-visible:border-primary focus-visible:ring-[3px] focus-visible:ring-primary/15"
+                            >
+                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-voxly-ink-5 group-hover:text-voxly-ink-6 transition-colors" />
+                                Search clients, projects, pages…
+                                <kbd className="absolute right-2.5 top-1/2 -translate-y-1/2 font-mono text-[10px] text-voxly-ink-6 bg-secondary px-1.5 py-0.5 rounded">
+                                    {isMac ? '⌘K' : 'Ctrl K'}
+                                </kbd>
+                            </button>
                         </div>
+                        <div className="flex-1 sm:hidden" />
 
                         {/* Right side */}
                         <div className="flex items-center gap-2">
-                            <Button variant="ghost" size="icon" className="relative w-9 h-9 rounded-lg bg-card border border-border hover:bg-accent text-voxly-ink-6 hover:text-foreground transition-all">
-                                <Bell className="w-4 h-4" />
-                                <span className="absolute top-2 right-2.5 w-1.5 h-1.5 bg-primary rounded-full" />
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => setPaletteOpen(true)}
+                                aria-label="Search"
+                                className="sm:hidden w-9 h-9 rounded-lg bg-card border border-border hover:bg-accent text-voxly-ink-6 hover:text-foreground"
+                            >
+                                <Search className="w-4 h-4" />
                             </Button>
+                            <NotificationBell />
 
                             <DropdownMenu>
                                 <DropdownMenuTrigger asChild>
-                                    <Button variant="ghost" className="relative h-9 p-0.5 rounded-full bg-card border border-border hover:bg-accent transition-all pl-1 pr-3 gap-2">
+                                    <Button variant="ghost" aria-label="Account menu" className="relative h-9 p-0.5 rounded-full bg-card border border-border hover:bg-accent transition-all pl-1 pr-3 gap-2">
                                         <Avatar className="w-7 h-7">
                                             <AvatarFallback className="bg-voxly-surface-3 text-voxly-ink-6 text-[10px] font-bold font-display">
                                                 {getInitials(user?.full_name || user?.email || 'U')}
@@ -194,24 +248,24 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
                                         </span>
                                     </Button>
                                 </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end" className="w-56 bg-popover border-border">
+                                <DropdownMenuContent align="end" className="w-56">
                                     <DropdownMenuLabel>
                                         <div className="py-1">
-                                            <p className="font-medium text-foreground">{user?.full_name || 'User'}</p>
-                                            <p className="text-xs text-voxly-ink-5 leading-none mt-1">{user?.email}</p>
+                                            <p className="font-medium text-foreground truncate">{user?.full_name || 'User'}</p>
+                                            <p className="text-xs text-voxly-ink-5 font-normal leading-none mt-1 truncate">{user?.email}</p>
                                         </div>
                                     </DropdownMenuLabel>
-                                    <DropdownMenuSeparator className="bg-border" />
-                                    <DropdownMenuItem asChild className="hover:bg-accent focus:bg-accent cursor-pointer text-voxly-ink-6 focus:text-foreground">
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem asChild className="text-voxly-ink-6 focus:text-foreground">
                                         <Link href="/settings/general">
                                             <Settings className="w-4 h-4 mr-2" />
                                             Settings
                                         </Link>
                                     </DropdownMenuItem>
-                                    <DropdownMenuSeparator className="bg-border" />
+                                    <DropdownMenuSeparator />
                                     <DropdownMenuItem
-                                        onClick={logout}
-                                        className="text-voxly-heat hover:bg-voxly-heat-soft focus:bg-voxly-heat-soft cursor-pointer focus:text-voxly-heat"
+                                        onSelect={logout}
+                                        className="text-voxly-heat focus:bg-voxly-heat-soft focus:text-voxly-heat"
                                     >
                                         <LogOut className="w-4 h-4 mr-2" />
                                         Logout
@@ -223,7 +277,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
                 </header>
 
                 {/* Page content */}
-                <main className="p-4 lg:p-8">
+                <main id="main-content" tabIndex={-1} className="p-4 lg:p-8 focus:outline-none">
                     <motion.div
                         key={pathname}
                         initial={{ opacity: 0, y: 12, scale: 0.99 }}

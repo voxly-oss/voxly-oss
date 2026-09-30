@@ -6,27 +6,17 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
-import { clientsAPI, notificationsAPI, projectsAPI } from '@/lib/api';
+import { clientsAPI, projectsAPI, getApiErrorMessage } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
-    Card,
-    CardContent,
-    CardDescription,
-    CardHeader,
-    CardTitle,
-} from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Progress } from '@/components/ui/progress';
-import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle,
-} from '@/components/ui/dialog';
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuSeparator,
+    DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { useToast } from '@/hooks/use-toast';
 import {
     ArrowLeft,
@@ -45,30 +35,93 @@ import {
     ArrowUpRight,
     GitBranch,
     Send,
+    MessageSquare,
+    MoreVertical,
+    Trash2,
 } from 'lucide-react';
 import Link from 'next/link';
-import { formatDate, formatPhone } from '@/lib/utils';
+import { formatDate, formatPhone, getInitials, nullIfBlank } from '@/lib/utils';
 import type { Client, Project } from '@/types';
-import { motion, AnimatePresence } from 'framer-motion';
+import StatusBadge from '@/components/StatusBadge';
+import EmptyState from '@/components/EmptyState';
+import FieldError from '@/components/FieldError';
+import ConfirmDialog from '@/components/ConfirmDialog';
+import ProjectFormDialog from '@/components/ProjectFormDialog';
+import FollowUpDialog from '@/components/FollowUpDialog';
+
+// Mirrors the backend's phonenumbers.is_possible_number check closely enough
+// to catch typos early, without rejecting the spaces/dashes people paste —
+// the server normalizes to E.164 either way.
+const PHONE_RE = /^\+?[\d\s\-().]+$/;
 
 const editClientSchema = z.object({
-    name: z.string().min(1, 'Name is required'),
-    phone: z.string().min(10, 'Phone must be at least 10 digits'),
-    email: z.string().email('Invalid email').optional().or(z.literal('')),
-    company: z.string().optional(),
-    telegram_chat_id: z.string().optional(),
-});
-
-const projectSchema = z.object({
-    name: z.string().min(1, 'Name is required'),
-    description: z.string().optional(),
-    github_repo: z.string().optional(),
-    start_date: z.string().optional(),
-    expected_end_date: z.string().optional(),
+    name: z
+        .string()
+        .refine((v) => v.trim().length > 0, 'Name is required')
+        .refine((v) => v.trim().length <= 255, 'Keep the name under 255 characters'),
+    phone: z
+        .string()
+        .refine(
+            (v) => PHONE_RE.test(v.trim()) && v.replace(/\D/g, '').length >= 7,
+            'Enter a phone number with country code, e.g. +91 97290 41423',
+        ),
+    email: z.string().refine((v) => !v.trim() || z.email().safeParse(v.trim()).success, 'Enter a valid email address'),
+    company: z.string().refine((v) => v.trim().length <= 255, 'Keep the company under 255 characters'),
+    telegram_chat_id: z.string().refine((v) => !v.trim() || /^-?\d+$/.test(v.trim()), 'Telegram chat IDs are numbers only'),
 });
 
 type EditClientFormData = z.infer<typeof editClientSchema>;
-type ProjectFormData = z.infer<typeof projectSchema>;
+
+const LABEL = 'text-[12.5px] font-medium text-voxly-ink-6';
+
+function DetailTile({ icon: Icon, label, children }: { icon: React.ElementType; label: string; children: React.ReactNode }) {
+    return (
+        <div className="flex items-center gap-3 p-3.5 rounded-xl bg-background border border-border min-w-0">
+            <div className="w-8 h-8 rounded-lg bg-voxly-surface-3 flex items-center justify-center flex-none text-voxly-ink-6">
+                <Icon className="w-4 h-4" />
+            </div>
+            <div className="min-w-0">
+                <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.04em] text-voxly-ink-5 mb-0.5">{label}</p>
+                <div className="text-[13px] font-medium text-foreground truncate">{children}</div>
+            </div>
+        </div>
+    );
+}
+
+function ProjectProgress({ project }: { project: Project }) {
+    const stats = project.github_stats;
+    // Real synced GitHub progress only. No repo / never synced renders a
+    // plain explanation rather than a stand-in 0%.
+    if (!stats) {
+        return (
+            <div className="flex justify-between text-xs">
+                <span className="text-voxly-ink-5">Progress</span>
+                <span className="text-voxly-ink-5" title={project.github_repo ? 'The repo hasn’t synced yet' : 'Link a GitHub repo to track progress'}>
+                    {project.github_repo ? 'Not synced yet' : 'No repo linked'}
+                </span>
+            </div>
+        );
+    }
+    const pct = Math.min(Math.max(stats.progress_percent, 0), 100);
+    return (
+        <div className="space-y-1.5">
+            <div className="flex justify-between text-xs">
+                <span className="text-voxly-ink-5">Progress</span>
+                <span className="text-foreground font-semibold tabular-nums">{pct}%</span>
+            </div>
+            <div
+                className="h-1.5 rounded-full bg-voxly-surface-3 overflow-hidden"
+                role="progressbar"
+                aria-valuenow={pct}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-label={`${project.name} progress`}
+            >
+                <div className="h-full rounded-full bg-primary" style={{ width: `${pct}%` }} />
+            </div>
+        </div>
+    );
+}
 
 export default function ClientDetailPage() {
     const params = useParams();
@@ -78,23 +131,18 @@ export default function ClientDetailPage() {
 
     const [editMode, setEditMode] = useState(false);
     const [projectDialogOpen, setProjectDialogOpen] = useState(false);
+    const [editingProject, setEditingProject] = useState<Project | null>(null);
+    const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
     const [followUpOpen, setFollowUpOpen] = useState(false);
-    const [followUpMessage, setFollowUpMessage] = useState('');
 
     const { data: client, isLoading: clientLoading } = useQuery({
         queryKey: ['client', clientId],
-        queryFn: async () => {
-            const response = await clientsAPI.get(clientId);
-            return response.data as Client;
-        },
+        queryFn: async () => (await clientsAPI.get(clientId)).data as Client,
     });
 
     const { data: projects = [], isLoading: projectsLoading } = useQuery({
         queryKey: ['projects', { client_id: clientId }],
-        queryFn: async () => {
-            const response = await projectsAPI.list({ client_id: clientId });
-            return response.data as Project[];
-        },
+        queryFn: async () => (await projectsAPI.list({ client_id: clientId })).data as Project[],
     });
 
     const editForm = useForm<EditClientFormData>({
@@ -109,587 +157,345 @@ export default function ClientDetailPage() {
             }
             : undefined,
     });
-
-    const projectForm = useForm<ProjectFormData>({
-        resolver: zodResolver(projectSchema),
-    });
+    const editErrors = editForm.formState.errors;
 
     const updateClientMutation = useMutation({
-        mutationFn: (data: EditClientFormData) => clientsAPI.update(clientId, data),
+        // Blank optional fields go as null so clearing one actually clears it
+        // ("" was rejected by the API's EmailStr → every client without an
+        // email failed to save).
+        mutationFn: (data: EditClientFormData) =>
+            clientsAPI.update(clientId, {
+                name: data.name.trim(),
+                phone: data.phone.trim(),
+                email: nullIfBlank(data.email),
+                company: nullIfBlank(data.company),
+                telegram_chat_id: nullIfBlank(data.telegram_chat_id),
+            }),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['client', clientId] });
+            queryClient.invalidateQueries({ queryKey: ['clients'] });
             toast({ title: 'Client updated' });
             setEditMode(false);
         },
-        onError: () => {
-            toast({ variant: 'destructive', title: 'Failed to update client' });
+        onError: (err) => {
+            toast({ variant: 'destructive', title: 'Couldn’t update client', description: getApiErrorMessage(err, 'Please try again.') });
         },
     });
 
-    // POST /api/v1/notifications/send — delivers a custom WhatsApp message to
-    // this client. The backend caps the body at 1000 chars and rate-limits to
-    // 10/min, so both are enforced here too rather than discovered on failure.
-    const followUpMutation = useMutation({
-        mutationFn: (message: string) =>
-            notificationsAPI.send({ client_id: clientId, message }),
-        onSuccess: (res) => {
-            toast({
-                title: 'Follow-up sent',
-                description: `Delivered to ${res.data?.client_name ?? client?.name ?? 'the client'} on WhatsApp.`,
-            });
-            setFollowUpOpen(false);
-            setFollowUpMessage('');
-        },
-        onError: (err: unknown) => {
-            const response = (err as { response?: { status?: number; data?: { detail?: string } } })?.response;
-            const detail = response?.data?.detail;
-            toast({
-                variant: 'destructive',
-                title: response?.status === 429 ? 'Slow down' : 'Failed to send follow-up',
-                description: response?.status === 429
-                    ? 'Too many messages sent in the last minute. Try again shortly.'
-                    : (typeof detail === 'string' ? detail : 'The message could not be delivered.'),
-            });
-        },
-    });
-
-    const FOLLOW_UP_MAX = 1000;
-    const followUpTrimmed = followUpMessage.trim();
-    const followUpTooLong = followUpMessage.length > FOLLOW_UP_MAX;
-    const canSendFollowUp =
-        !!client?.phone && followUpTrimmed.length > 0 && !followUpTooLong && !followUpMutation.isPending;
-
-    const createProjectMutation = useMutation({
-        mutationFn: (data: ProjectFormData) =>
-            projectsAPI.create({ ...data, client_id: clientId }),
+    const deleteProjectMutation = useMutation({
+        mutationFn: (id: string) => projectsAPI.delete(id),
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['projects', { client_id: clientId }] });
-            toast({ title: 'Project created' });
-            setProjectDialogOpen(false);
-            projectForm.reset();
+            queryClient.invalidateQueries({ queryKey: ['projects'] });
+            queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });
+            toast({ title: 'Project deleted', description: projectToDelete?.name });
+            setProjectToDelete(null);
         },
-        onError: () => {
-            toast({ variant: 'destructive', title: 'Failed to create project' });
+        onError: (err) => {
+            toast({ variant: 'destructive', title: 'Couldn’t delete project', description: getApiErrorMessage(err, 'Please try again.') });
         },
     });
 
-    const getStatusStyle = (status: string) => {
-        const styles: Record<string, string> = {
-            active: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
-            paused: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
-            completed: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
-            cancelled: 'bg-red-500/20 text-red-400 border-red-500/30',
-        };
-        return styles[status] || styles.active;
+    const openCreateProject = () => {
+        setEditingProject(null);
+        setProjectDialogOpen(true);
+    };
+    const openEditProject = (project: Project) => {
+        setEditingProject(project);
+        setProjectDialogOpen(true);
+    };
+    const cancelEdit = () => {
+        editForm.reset();
+        setEditMode(false);
     };
 
     if (clientLoading) {
         return (
             <div className="flex items-center justify-center py-12">
-                <Loader2 className="w-8 h-8 animate-spin text-violet-500" />
+                <Loader2 className="w-8 h-8 animate-spin text-primary" />
             </div>
         );
     }
 
     if (!client) {
         return (
-            <div className="text-center py-12">
-                <h2 className="text-xl font-semibold text-white">Client not found</h2>
-                <Link href="/clients">
-                    <Button variant="link" className="text-violet-400">Back to clients</Button>
-                </Link>
+            <div className="border border-border rounded-[14px] bg-card">
+                <EmptyState icon={FolderGit2} title="Client not found" description="It may have been deleted, or the link is wrong." href="/clients" label="Back to clients" />
             </div>
         );
     }
 
-    const projectsContent = (() => {
-        if (projectsLoading) {
-            return (
-                <div className="flex items-center justify-center py-12">
-                    <Loader2 className="w-8 h-8 animate-spin text-violet-500" />
-                </div>
-            );
-        }
-
-        if (projects.length === 0) {
-            return (
-                <Card className="glass-card border-white/5">
-                    <CardContent className="py-12 text-center">
-                        <div className="w-16 h-16 rounded-2xl bg-white/5 flex items-center justify-center mx-auto mb-4 border border-white/10">
-                            <FolderGit2 className="w-8 h-8 text-white/20" />
-                        </div>
-                        <h3 className="font-medium text-white mb-2">No projects yet</h3>
-                        <p className="text-white/40 mb-6 max-w-sm mx-auto">
-                            Create a project to start tracking milestones
-                        </p>
-                        <Button
-                            onClick={() => setProjectDialogOpen(true)}
-                            className="bg-gradient-to-r from-violet-600 to-blue-600 hover:from-violet-500 hover:to-blue-500 text-white border-0"
-                        >
-                            <Plus className="w-4 h-4 mr-2" />
-                            Add Project
-                        </Button>
-                    </CardContent>
-                </Card>
-            );
-        }
-
-        return (
-            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {projects.map((project) => (
-                    <Card key={project.id} className="glass-card border-white/5 card-hover group h-full">
-                        <CardHeader className="pb-3 border-b border-white/5 space-y-3">
-                            <div className="flex items-start justify-between">
-                                <CardTitle className="text-lg text-white group-hover:text-violet-400 transition-colors">
-                                    {project.name}
-                                </CardTitle>
-                                <Badge className={getStatusStyle(project.status)}>
-                                    {project.status}
-                                </Badge>
-                            </div>
-                            {project.github_repo && (
-                                <a
-                                    href={`https://github.com/${project.github_repo}`}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1 transition-colors"
-                                >
-                                    <GitBranch className="w-3 h-3" />
-                                    {project.github_repo}
-                                    <ExternalLink className="w-2.5 h-2.5 opacity-50" />
-                                </a>
-                            )}
-                        </CardHeader>
-                        <CardContent className="pt-4 space-y-4">
-                            {project.description && (
-                                <p className="text-sm text-white/60 line-clamp-2 h-10">
-                                    {project.description}
-                                </p>
-                            )}
-                            <div className="space-y-2">
-                                <div className="flex justify-between text-xs">
-                                    <span className="text-white/40">Progress</span>
-                                    <span className="text-white font-medium">0%</span>
-                                </div>
-                                <Progress value={0} className="h-1.5 bg-white/5" indicatorClassName="bg-gradient-to-r from-violet-500 to-blue-500" />
-                            </div>
-                            <div className="grid grid-cols-2 gap-2 text-xs">
-                                <div className="p-2 rounded-lg bg-white/5 border border-white/5">
-                                    <p className="text-white/30 mb-1 flex items-center gap-1">
-                                        <Calendar className="w-3 h-3" /> Start
-                                    </p>
-                                    <p className="text-white/70">{formatDate(project.start_date)}</p>
-                                </div>
-                                <div className="p-2 rounded-lg bg-white/5 border border-white/5">
-                                    <p className="text-white/30 mb-1 flex items-center gap-1">
-                                        <Clock className="w-3 h-3" /> Due
-                                    </p>
-                                    <p className="text-white/70">{formatDate(project.expected_end_date)}</p>
-                                </div>
-                            </div>
-                            <Link href={`/clients/${clientId}/projects/${project.id}/milestones`}>
-                                <Button variant="outline" size="sm" className="w-full border-white/10 text-white hover:bg-white/5 group-hover:border-violet-500/30 transition-colors">
-                                    View Details
-                                    <ArrowUpRight className="w-4 h-4 ml-2 opacity-50" />
-                                </Button>
-                            </Link>
-                        </CardContent>
-                    </Card>
-                ))}
-            </div>
-        );
-    })();
+    const describedBy = (field: keyof EditClientFormData) => (editErrors[field] ? `client-${field}-error` : undefined);
 
     return (
-        <motion.div
-            className="space-y-6"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.5 }}
-        >
-            {/* Back button */}
-            <Link
-                href="/clients"
-                className="inline-flex items-center text-sm text-white/50 hover:text-white transition-colors"
-            >
-                <ArrowLeft className="w-4 h-4 mr-2" />
-                Back to clients
-            </Link>
+        <div className="flex flex-col gap-[18px]">
+            {/* Breadcrumb */}
+            <div className="flex items-center gap-1.5 text-[12.5px] min-w-0">
+                <Link href="/clients" className="flex items-center gap-1 text-voxly-ink-6 hover:text-foreground transition-colors flex-none">
+                    <ArrowLeft className="w-3.5 h-3.5" /> Clients
+                </Link>
+                <span className="text-voxly-ink-5">/</span>
+                <span className="text-foreground font-semibold truncate">{client.name}</span>
+            </div>
 
-            {/* Client info card */}
-            <Card className="glass-card border-white/5 gradient-border">
-                <CardHeader className="flex flex-row items-start justify-between border-b border-white/5 pb-6">
-                    <div>
-                        <CardTitle className="text-2xl text-white">{client.name}</CardTitle>
-                        <CardDescription className="text-white/40">
-                            Added on {formatDate(client.created_at)}
-                        </CardDescription>
+            {/* Client header */}
+            <div className="border border-border rounded-[14px] bg-card overflow-hidden">
+                <div className="flex flex-wrap items-start justify-between gap-4 px-5 py-4 border-b border-border">
+                    <div className="flex items-center gap-3.5 min-w-0">
+                        <div className="w-11 h-11 rounded-xl bg-voxly-surface-3 flex items-center justify-center flex-none font-display font-bold text-sm text-voxly-ink-6">
+                            {getInitials(client.name)}
+                        </div>
+                        <div className="min-w-0">
+                            <div className="flex items-center gap-2.5 flex-wrap">
+                                <h1 className="font-display font-bold text-[22px] text-foreground tracking-[-0.01em] truncate">{client.name}</h1>
+                                <StatusBadge status={client.is_active ? 'active' : 'inactive'} />
+                            </div>
+                            <p className="text-[12.5px] text-voxly-ink-5 mt-0.5">Added {formatDate(client.created_at)}</p>
+                        </div>
                     </div>
-                    <div className="flex items-center gap-2 flex-wrap justify-end">
+                    <div className="flex items-center gap-2 flex-wrap">
                         <Button
                             variant="outline"
                             size="sm"
                             onClick={() => setFollowUpOpen(true)}
-                            disabled={!client.phone}
+                            disabled={!client.phone || editMode}
                             title={client.phone ? 'Send a WhatsApp message to this client' : 'This client has no phone number on file'}
-                            className="border-white/10 text-white hover:bg-white/5 disabled:opacity-40 disabled:cursor-not-allowed"
+                            className="gap-2"
                         >
-                            <Send className="w-4 h-4 mr-2" />
-                            Send Follow-up
+                            <Send className="w-3.5 h-3.5" />
+                            Send follow-up
                         </Button>
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => setEditMode(!editMode)}
-                            className="border-white/10 text-white hover:bg-white/5"
-                        >
-                            {editMode ? (
-                                <>
-                                    <X className="w-4 h-4 mr-2" />
-                                    Cancel
-                                </>
-                            ) : (
-                                <>
-                                    <Pencil className="w-4 h-4 mr-2" />
-                                    Edit Matches
-                                </>
-                            )}
+                        <Button variant="outline" size="sm" asChild className="gap-2">
+                            <Link href={`/messages?client=${client.id}`}>
+                                <MessageSquare className="w-3.5 h-3.5" />
+                                Conversation
+                            </Link>
                         </Button>
-                    </div>
-                </CardHeader>
-                <CardContent className="pt-6">
-                    <AnimatePresence mode="wait">
-                        {editMode ? (
-                            <motion.form
-                                key="edit-form"
-                                initial={{ opacity: 0, y: 10 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                exit={{ opacity: 0, y: -10 }}
-                                onSubmit={editForm.handleSubmit((data) =>
-                                    updateClientMutation.mutate(data)
-                                )}
-                                className="space-y-6"
-                            >
-                                <div className="grid md:grid-cols-2 gap-6">
-                                    <div className="space-y-2">
-                                        <Label htmlFor="name" className="text-white/70">Name</Label>
-                                        <Input
-                                            id="name"
-                                            {...editForm.register('name')}
-                                            className="bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:border-violet-500/50 h-11"
-                                        />
-                                    </div>
-                                    <div className="space-y-2">
-                                        <Label htmlFor="phone" className="text-white/70">Phone</Label>
-                                        <Input
-                                            id="phone"
-                                            {...editForm.register('phone')}
-                                            className="bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:border-violet-500/50 h-11"
-                                        />
-                                    </div>
-                                    <div className="space-y-2">
-                                        <Label htmlFor="email" className="text-white/70">Email</Label>
-                                        <Input
-                                            id="email"
-                                            {...editForm.register('email')}
-                                            className="bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:border-violet-500/50 h-11"
-                                        />
-                                    </div>
-                                    <div className="space-y-2">
-                                        <Label htmlFor="company" className="text-white/70">Company</Label>
-                                        <Input
-                                            id="company"
-                                            {...editForm.register('company')}
-                                            className="bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:border-violet-500/50 h-11"
-                                        />
-                                    </div>
-                                    <div className="space-y-2">
-                                        <Label htmlFor="telegram_chat_id" className="text-white/70 flex items-center gap-2">
-                                            <Send className="w-3.5 h-3.5 text-blue-400" />
-                                            Telegram Chat ID
-                                        </Label>
-                                        <Input
-                                            id="telegram_chat_id"
-                                            placeholder="e.g. 123456789"
-                                            {...editForm.register('telegram_chat_id')}
-                                            className="bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:border-violet-500/50 h-11"
-                                        />
-                                        <p className="text-xs text-white/40">
-                                            Client gets this by messaging your Voxly Bot with /start on Telegram
-                                        </p>
-                                    </div>
-                                </div>
-                                <div className="flex justify-end gap-3">
-                                    <Button
-                                        type="button"
-                                        variant="ghost"
-                                        onClick={() => setEditMode(false)}
-                                        className="text-white/60 hover:text-white hover:bg-white/10"
-                                    >
-                                        Cancel
-                                    </Button>
-                                    <Button
-                                        type="submit"
-                                        disabled={updateClientMutation.isPending}
-                                        className="bg-gradient-to-r from-violet-600 to-blue-600 hover:from-violet-500 hover:to-blue-500 text-white border-0"
-                                    >
-                                        {updateClientMutation.isPending ? (
-                                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                                        ) : (
-                                            <Save className="w-4 h-4 mr-2" />
-                                        )}
-                                        Save Changes
-                                    </Button>
-                                </div>
-                            </motion.form>
-                        ) : (
-                            <motion.div
-                                key="view-details"
-                                initial={{ opacity: 0, y: 10 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                exit={{ opacity: 0, y: -10 }}
-                                className="grid md:grid-cols-2 lg:grid-cols-5 gap-6"
-                            >
-                                <div className="flex items-center gap-3 p-4 rounded-xl bg-white/5 border border-white/5">
-                                    <div className="p-2.5 bg-blue-500/10 rounded-lg border border-blue-500/20">
-                                        <Phone className="w-4 h-4 text-blue-400" />
-                                    </div>
-                                    <div>
-                                        <p className="text-xs text-white/40 mb-0.5">Phone</p>
-                                        <p className="font-medium text-white">{formatPhone(client.phone)}</p>
-                                    </div>
-                                </div>
-                                <div className="flex items-center gap-3 p-4 rounded-xl bg-white/5 border border-white/5">
-                                    <div className="p-2.5 bg-emerald-500/10 rounded-lg border border-emerald-500/20">
-                                        <Mail className="w-4 h-4 text-emerald-400" />
-                                    </div>
-                                    <div>
-                                        <p className="text-xs text-white/40 mb-0.5">Email</p>
-                                        <p className="font-medium text-white">{client.email || '—'}</p>
-                                    </div>
-                                </div>
-                                <div className="flex items-center gap-3 p-4 rounded-xl bg-white/5 border border-white/5">
-                                    <div className="p-2.5 bg-violet-500/10 rounded-lg border border-violet-500/20">
-                                        <Building className="w-4 h-4 text-violet-400" />
-                                    </div>
-                                    <div>
-                                        <p className="text-xs text-white/40 mb-0.5">Company</p>
-                                        <p className="font-medium text-white">{client.company || '—'}</p>
-                                    </div>
-                                </div>
-                                <div className="flex items-center gap-3 p-4 rounded-xl bg-white/5 border border-white/5">
-                                    <div className="p-2.5 bg-amber-500/10 rounded-lg border border-amber-500/20">
-                                        <Calendar className="w-4 h-4 text-amber-400" />
-                                    </div>
-                                    <div>
-                                        <p className="text-xs text-white/40 mb-0.5">Status</p>
-                                        <Badge
-                                            className={client.is_active
-                                                ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/20'
-                                                : 'bg-white/10 text-white/50 border-white/10'
-                                            }
-                                        >
-                                            {client.is_active ? 'Active' : 'Inactive'}
-                                        </Badge>
-                                    </div>
-                                </div>
-                                <div className="flex items-center gap-3 p-4 rounded-xl bg-white/5 border border-white/5">
-                                    <div className="p-2.5 bg-blue-500/10 rounded-lg border border-blue-500/20">
-                                        <Send className="w-4 h-4 text-blue-400" />
-                                    </div>
-                                    <div>
-                                        <p className="text-xs text-white/40 mb-0.5">Telegram</p>
-                                        <p className="font-medium text-white">
-                                            {client.telegram_chat_id ? (
-                                                <span className="font-mono text-sm">{client.telegram_chat_id}</span>
-                                            ) : (
-                                                <span className="text-white/30">Not linked</span>
-                                            )}
-                                        </p>
-                                    </div>
-                                </div>
-                            </motion.div>
+                        {!editMode && (
+                            <Button size="sm" onClick={() => setEditMode(true)} className="gap-2 font-semibold">
+                                <Pencil className="w-3.5 h-3.5" />
+                                Edit client
+                            </Button>
                         )}
-                    </AnimatePresence>
-                </CardContent>
-            </Card>
+                    </div>
+                </div>
 
-            {/* Projects section */}
+                <div className="p-5">
+                    {editMode ? (
+                        <form
+                            onSubmit={editForm.handleSubmit((data) => updateClientMutation.mutate(data))}
+                            className="space-y-5"
+                            noValidate
+                        >
+                            <div className="grid md:grid-cols-2 gap-4">
+                                <div className="space-y-1.5">
+                                    <Label htmlFor="client-name" className={LABEL}>Name *</Label>
+                                    <Input id="client-name" autoFocus aria-invalid={!!editErrors.name} aria-describedby={describedBy('name')} {...editForm.register('name')} />
+                                    <FieldError id="client-name-error" message={editErrors.name?.message} />
+                                </div>
+                                <div className="space-y-1.5">
+                                    <Label htmlFor="client-phone" className={LABEL}>Phone *</Label>
+                                    <Input id="client-phone" type="tel" inputMode="tel" placeholder="+91 97290 41423" aria-invalid={!!editErrors.phone} aria-describedby={describedBy('phone')} {...editForm.register('phone')} />
+                                    <FieldError id="client-phone-error" message={editErrors.phone?.message} />
+                                </div>
+                                <div className="space-y-1.5">
+                                    <Label htmlFor="client-email" className={LABEL}>Email</Label>
+                                    <Input id="client-email" type="email" placeholder="name@company.com" aria-invalid={!!editErrors.email} aria-describedby={describedBy('email')} {...editForm.register('email')} />
+                                    <FieldError id="client-email-error" message={editErrors.email?.message} />
+                                </div>
+                                <div className="space-y-1.5">
+                                    <Label htmlFor="client-company" className={LABEL}>Company</Label>
+                                    <Input id="client-company" aria-invalid={!!editErrors.company} aria-describedby={describedBy('company')} {...editForm.register('company')} />
+                                    <FieldError id="client-company-error" message={editErrors.company?.message} />
+                                </div>
+                                <div className="space-y-1.5">
+                                    <Label htmlFor="client-telegram_chat_id" className={LABEL}>Telegram chat ID</Label>
+                                    <Input
+                                        id="client-telegram_chat_id"
+                                        placeholder="e.g. 123456789"
+                                        inputMode="numeric"
+                                        className="font-mono"
+                                        aria-invalid={!!editErrors.telegram_chat_id}
+                                        aria-describedby={describedBy('telegram_chat_id') ?? 'client-telegram-hint'}
+                                        {...editForm.register('telegram_chat_id')}
+                                    />
+                                    {editErrors.telegram_chat_id ? (
+                                        <FieldError id="client-telegram_chat_id-error" message={editErrors.telegram_chat_id.message} />
+                                    ) : (
+                                        <p id="client-telegram-hint" className="text-[11.5px] text-voxly-ink-5">
+                                            The client gets this by messaging your Voxly bot with /start on Telegram.
+                                        </p>
+                                    )}
+                                </div>
+                            </div>
+                            <div className="flex justify-end gap-2">
+                                <Button type="button" variant="outline" onClick={cancelEdit} disabled={updateClientMutation.isPending} className="gap-2">
+                                    <X className="w-4 h-4" />
+                                    Cancel
+                                </Button>
+                                <Button type="submit" disabled={updateClientMutation.isPending} className="gap-2 font-semibold">
+                                    {updateClientMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                                    Save changes
+                                </Button>
+                            </div>
+                        </form>
+                    ) : (
+                        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                            <DetailTile icon={Phone} label="Phone">{formatPhone(client.phone)}</DetailTile>
+                            <DetailTile icon={Mail} label="Email">
+                                {client.email ? (
+                                    <a href={`mailto:${client.email}`} className="hover:text-primary transition-colors">{client.email}</a>
+                                ) : (
+                                    <span className="text-voxly-ink-5">—</span>
+                                )}
+                            </DetailTile>
+                            <DetailTile icon={Building} label="Company">
+                                {client.company || <span className="text-voxly-ink-5">—</span>}
+                            </DetailTile>
+                            <DetailTile icon={Send} label="Telegram">
+                                {client.telegram_chat_id ? (
+                                    <span className="font-mono text-[12.5px]">{client.telegram_chat_id}</span>
+                                ) : (
+                                    <span className="text-voxly-ink-5">Not linked</span>
+                                )}
+                            </DetailTile>
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            {/* Projects */}
             <div className="flex items-center justify-between">
-                <h2 className="text-xl font-semibold text-white">Projects</h2>
-                <Button
-                    onClick={() => setProjectDialogOpen(true)}
-                    className="bg-white/10 hover:bg-white/20 text-white border-0"
-                >
-                    <Plus className="w-4 h-4 mr-2" />
-                    Add Project
+                <h2 className="font-display font-semibold text-[15px] text-foreground">
+                    Projects
+                    {projects.length > 0 && <span className="ml-2 text-voxly-ink-5 font-normal text-[13px]">{projects.length}</span>}
+                </h2>
+                <Button onClick={openCreateProject} className="font-semibold text-[13px] rounded-lg px-3.5 py-2 h-auto gap-1.5">
+                    <Plus className="w-3.5 h-3.5" /> Add project
                 </Button>
             </div>
 
-            {projectsContent}
-
-            {/* Add project dialog */}
-            {/* Send Follow-up — POST /api/v1/notifications/send */}
-            <Dialog
-                open={followUpOpen}
-                onOpenChange={(open) => {
-                    if (followUpMutation.isPending) return;
-                    setFollowUpOpen(open);
-                    if (!open) setFollowUpMessage('');
-                }}
-            >
-                <DialogContent className="glass-card border-white/10">
-                    <DialogHeader>
-                        <DialogTitle className="text-white flex items-center gap-2">
-                            <Send className="w-4 h-4 text-blue-400" />
-                            Send Follow-up
-                        </DialogTitle>
-                        <DialogDescription className="text-white/60">
-                            Delivered to {client.name} on WhatsApp
-                            {client.phone && <span className="font-mono text-white/40"> · {formatPhone(client.phone)}</span>}
-                        </DialogDescription>
-                    </DialogHeader>
-
-                    <div className="space-y-2">
-                        <Label htmlFor="follow-up-message" className="text-white/80">Message</Label>
-                        <textarea
-                            id="follow-up-message"
-                            rows={5}
-                            autoFocus
-                            value={followUpMessage}
-                            onChange={(e) => setFollowUpMessage(e.target.value)}
-                            onKeyDown={(e) => {
-                                if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && canSendFollowUp) {
-                                    followUpMutation.mutate(followUpTrimmed);
-                                }
-                            }}
-                            placeholder="Quick update on your project…"
-                            className="w-full resize-y rounded-md bg-white/5 border border-white/10 text-white placeholder:text-white/30 focus:border-violet-500/50 focus:outline-none px-3 py-2 text-sm"
-                        />
-                        <div className="flex items-center justify-between text-xs">
-                            <span className="text-white/30">⌘/Ctrl + Enter to send</span>
-                            <span className={followUpTooLong ? 'text-red-400' : 'text-white/40'}>
-                                {followUpMessage.length} / {FOLLOW_UP_MAX}
-                            </span>
-                        </div>
-                        {followUpTooLong && (
-                            <p className="text-xs text-red-400">
-                                Message is {followUpMessage.length - FOLLOW_UP_MAX} character
-                                {followUpMessage.length - FOLLOW_UP_MAX === 1 ? '' : 's'} over the limit.
-                            </p>
-                        )}
+            {projectsLoading ? (
+                <div className="flex items-center justify-center py-12">
+                    <Loader2 className="w-6 h-6 animate-spin text-primary" />
+                </div>
+            ) : projects.length === 0 ? (
+                <div className="border border-border rounded-[14px] bg-card py-12 text-center">
+                    <div className="w-11 h-11 rounded-xl bg-voxly-surface-2 flex items-center justify-center mx-auto mb-4 text-voxly-ink-6">
+                        <FolderGit2 className="w-5 h-5" />
                     </div>
-
-                    <DialogFooter className="gap-2">
-                        <Button
-                            type="button"
-                            variant="ghost"
-                            onClick={() => { setFollowUpOpen(false); setFollowUpMessage(''); }}
-                            disabled={followUpMutation.isPending}
-                            className="text-white/60 hover:text-white hover:bg-white/5"
-                        >
-                            Cancel
-                        </Button>
-                        <Button
-                            type="button"
-                            onClick={() => followUpMutation.mutate(followUpTrimmed)}
-                            disabled={!canSendFollowUp}
-                            className="bg-gradient-to-r from-violet-600 to-blue-600 hover:from-violet-500 hover:to-blue-500 text-white disabled:opacity-40"
-                        >
-                            {followUpMutation.isPending ? (
-                                <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Sending…</>
-                            ) : (
-                                <><Send className="w-4 h-4 mr-2" />Send message</>
-                            )}
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
-
-            <Dialog open={projectDialogOpen} onOpenChange={setProjectDialogOpen}>
-                <DialogContent className="glass-card border-white/10">
-                    <DialogHeader>
-                        <DialogTitle className="text-white">Add New Project</DialogTitle>
-                        <DialogDescription className="text-white/60">
-                            Create a project for {client.name}
-                        </DialogDescription>
-                    </DialogHeader>
-                    <form
-                        onSubmit={projectForm.handleSubmit((data) =>
-                            createProjectMutation.mutate(data)
-                        )}
-                        className="space-y-4"
-                    >
-                        <div className="space-y-2">
-                            <Label htmlFor="project-name" className="text-white/70">Project Name *</Label>
-                            <Input
-                                id="project-name"
-                                placeholder="My Awesome App"
-                                className="bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:border-violet-500/50"
-                                {...projectForm.register('name')}
-                            />
-                        </div>
-                        <div className="space-y-2">
-                            <Label htmlFor="github-repo" className="text-white/70">GitHub Repository</Label>
-                            <Input
-                                id="github-repo"
-                                placeholder="owner/repo"
-                                className="bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:border-violet-500/50"
-                                {...projectForm.register('github_repo')}
-                            />
-                        </div>
-                        <div className="space-y-2">
-                            <Label htmlFor="description" className="text-white/70">Description</Label>
-                            <Input
-                                id="description"
-                                placeholder="Brief description..."
-                                className="bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:border-violet-500/50"
-                                {...projectForm.register('description')}
-                            />
-                        </div>
-                        <div className="grid grid-cols-2 gap-4">
-                            <div className="space-y-2">
-                                <Label htmlFor="start-date" className="text-white/70">Start Date</Label>
-                                <Input
-                                    id="start-date"
-                                    type="date"
-                                    className="bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:border-violet-500/50"
-                                    {...projectForm.register('start_date')}
-                                />
-                            </div>
-                            <div className="space-y-2">
-                                <Label htmlFor="end-date" className="text-white/70">Expected End Date</Label>
-                                <Input
-                                    id="end-date"
-                                    type="date"
-                                    className="bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:border-violet-500/50"
-                                    {...projectForm.register('expected_end_date')}
-                                />
-                            </div>
-                        </div>
-                        <DialogFooter className="gap-2">
-                            <Button
-                                type="button"
-                                variant="outline"
-                                onClick={() => setProjectDialogOpen(false)}
-                                className="border-white/10 text-white hover:bg-white/10"
-                            >
-                                Cancel
-                            </Button>
-                            <Button
-                                type="submit"
-                                disabled={createProjectMutation.isPending}
-                                className="bg-gradient-to-r from-violet-600 to-blue-600 hover:from-violet-500 hover:to-blue-500 text-white border-0"
-                            >
-                                {createProjectMutation.isPending && (
-                                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    <h3 className="text-[14.5px] font-semibold text-foreground mb-1.5">No projects yet</h3>
+                    <p className="text-[13px] text-voxly-ink-6 max-w-[300px] mx-auto mb-5">
+                        Add a project to track milestones — link its GitHub repo and Voxly can answer status questions with real data.
+                    </p>
+                    <Button onClick={openCreateProject} className="font-semibold gap-1.5">
+                        <Plus className="w-4 h-4" /> Add project
+                    </Button>
+                </div>
+            ) : (
+                <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
+                    {projects.map((project) => (
+                        <div key={project.id} className="group border border-border rounded-[14px] bg-card flex flex-col hover:border-voxly-ink-4 transition-colors">
+                            <div className="px-4 pt-4 pb-3 border-b border-border space-y-2">
+                                <div className="flex items-start justify-between gap-2">
+                                    <Link
+                                        href={`/clients/${clientId}/projects/${project.id}/milestones`}
+                                        className="font-display font-semibold text-[15px] text-foreground hover:text-primary transition-colors min-w-0 truncate"
+                                    >
+                                        {project.name}
+                                    </Link>
+                                    <div className="flex items-center gap-1 flex-none">
+                                        <StatusBadge status={project.status} />
+                                        <DropdownMenu>
+                                            <DropdownMenuTrigger asChild>
+                                                <Button variant="ghost" size="icon" className="w-7 h-7 text-voxly-ink-5 hover:text-foreground" aria-label={`Actions for ${project.name}`}>
+                                                    <MoreVertical className="w-4 h-4" />
+                                                </Button>
+                                            </DropdownMenuTrigger>
+                                            <DropdownMenuContent align="end">
+                                                <DropdownMenuItem onSelect={() => openEditProject(project)}>
+                                                    <Pencil className="w-4 h-4 mr-2" /> Edit project
+                                                </DropdownMenuItem>
+                                                <DropdownMenuSeparator />
+                                                <DropdownMenuItem
+                                                    className="text-voxly-heat focus:bg-voxly-heat-soft focus:text-voxly-heat"
+                                                    onSelect={() => setProjectToDelete(project)}
+                                                >
+                                                    <Trash2 className="w-4 h-4 mr-2" /> Delete project
+                                                </DropdownMenuItem>
+                                            </DropdownMenuContent>
+                                        </DropdownMenu>
+                                    </div>
+                                </div>
+                                {project.github_repo && (
+                                    <a
+                                        href={`https://github.com/${project.github_repo}`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="inline-flex items-center gap-1 font-mono text-[11px] text-voxly-ink-5 hover:text-foreground transition-colors max-w-full"
+                                    >
+                                        <GitBranch className="w-3 h-3 flex-none" />
+                                        <span className="truncate">{project.github_repo}</span>
+                                        <ExternalLink className="w-2.5 h-2.5 flex-none opacity-60" />
+                                    </a>
                                 )}
-                                Create Project
-                            </Button>
-                        </DialogFooter>
-                    </form>
-                </DialogContent>
-            </Dialog>
-        </motion.div>
+                            </div>
+                            <div className="p-4 space-y-4 flex-1 flex flex-col">
+                                {project.description && (
+                                    <p className="text-[12.5px] text-voxly-ink-6 line-clamp-2">{project.description}</p>
+                                )}
+                                <ProjectProgress project={project} />
+                                <div className="grid grid-cols-2 gap-2 text-xs">
+                                    <div className="p-2 rounded-lg bg-background border border-border">
+                                        <p className="text-voxly-ink-5 mb-0.5 flex items-center gap-1"><Calendar className="w-3 h-3" /> Start</p>
+                                        <p className="text-foreground">{formatDate(project.start_date)}</p>
+                                    </div>
+                                    <div className="p-2 rounded-lg bg-background border border-border">
+                                        <p className="text-voxly-ink-5 mb-0.5 flex items-center gap-1"><Clock className="w-3 h-3" /> Due</p>
+                                        <p className="text-foreground">{formatDate(project.expected_end_date)}</p>
+                                    </div>
+                                </div>
+                                <Button variant="outline" size="sm" asChild className="w-full mt-auto gap-1.5">
+                                    <Link href={`/clients/${clientId}/projects/${project.id}/milestones`}>
+                                        View milestones
+                                        <ArrowUpRight className="w-3.5 h-3.5 opacity-60" />
+                                    </Link>
+                                </Button>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            )}
+
+            <ProjectFormDialog
+                open={projectDialogOpen}
+                onOpenChange={(open) => {
+                    setProjectDialogOpen(open);
+                    if (!open) setEditingProject(null);
+                }}
+                clientId={clientId}
+                clientName={client.name}
+                project={editingProject}
+            />
+
+            <ConfirmDialog
+                open={!!projectToDelete}
+                onOpenChange={(open) => { if (!open) setProjectToDelete(null); }}
+                title="Delete project?"
+                description={
+                    <>
+                        &ldquo;{projectToDelete?.name}&rdquo; and all of its milestones will be deleted. This can&rsquo;t be undone.
+                    </>
+                }
+                confirmLabel="Delete project"
+                pending={deleteProjectMutation.isPending}
+                onConfirm={() => projectToDelete && deleteProjectMutation.mutate(projectToDelete.id)}
+            />
+
+            <FollowUpDialog
+                open={followUpOpen}
+                onOpenChange={setFollowUpOpen}
+                client={{ id: client.id, name: client.name, phone: client.phone }}
+            />
+        </div>
     );
 }

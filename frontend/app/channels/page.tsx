@@ -144,8 +144,14 @@ export default function ChannelsPage() {
                             {' '}across {byType.filter(t => t.count > 0).length} channel type{byType.filter(t => t.count > 0).length === 1 ? '' : 's'}
                         </p>
                     </div>
-                    <Link href="/clients/new" className="bg-primary hover:bg-primary/90 text-primary-foreground font-semibold text-[13px] rounded-lg px-4 py-[9px] flex items-center gap-[7px] transition-colors">
-                        <Plus className="w-[15px] h-[15px]" /> Connect channel
+                    {/* Channels connect per client (WhatsApp number / Telegram chat ID),
+                        so this goes to Add Client — the label now says so. */}
+                    <Link
+                        href="/clients/new"
+                        title="Channels connect per client — add a client's WhatsApp number or Telegram chat ID"
+                        className="bg-primary hover:bg-primary/90 text-primary-foreground font-semibold text-[13px] rounded-lg px-4 py-[9px] flex items-center gap-[7px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                    >
+                        <Plus className="w-[15px] h-[15px]" /> Connect a client
                     </Link>
                 </div>
 

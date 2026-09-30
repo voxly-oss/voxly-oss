@@ -6,7 +6,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import Link from 'next/link';
 import { useAuth } from '@/hooks/useAuth';
-import { authAPI } from '@/lib/api';
+import { authAPI, getApiErrorMessage } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -105,13 +105,10 @@ export default function RegisterPage() {
                 description: 'Welcome to Voxly.',
             });
         } catch (err) {
-            const error = err as { response?: { data?: { detail?: string } } };
             toast({
                 variant: 'destructive',
                 title: 'Registration failed',
-                description:
-                    error.response?.data?.detail ||
-                    'Something went wrong. Please try again.',
+                description: getApiErrorMessage(err, 'Something went wrong. Please try again.'),
             });
         } finally {
             setIsLoading(false);
@@ -162,12 +159,10 @@ export default function RegisterPage() {
                             description: 'Your account has been created.',
                         });
                     } catch (err) {
-                        const error = err as { response?: { data?: { detail?: string } } };
                         toast({
                             variant: 'destructive',
                             title: 'Sign-up failed',
-                            description:
-                                error.response?.data?.detail || 'Google sign-up failed.',
+                            description: getApiErrorMessage(err, 'Google sign-up failed.'),
                         });
                     } finally {
                         setIsGoogleLoading(false);
@@ -422,18 +417,24 @@ export default function RegisterPage() {
 
                             <p className="text-[11px] text-white/25 leading-relaxed pt-0.5">
                                 By signing up, you agree to our{' '}
-                                <button
-                                    type="button"
-                                    className="text-violet-400/60 hover:text-violet-400 transition-colors"
+                                {/* Were <button>s with no handler. The documents live in
+                                    the repo root (TERMS.md / PRIVACY.md). */}
+                                <a
+                                    href="https://github.com/voxly-oss/voxly-oss/blob/main/TERMS.md"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-violet-400/70 hover:text-violet-400 underline-offset-2 hover:underline transition-colors"
                                 >
                                     Terms of Service
-                                </button>{" and "}
-                                <button
-                                    type="button"
-                                    className="text-violet-400/60 hover:text-violet-400 transition-colors"
+                                </a>{" and "}
+                                <a
+                                    href="https://github.com/voxly-oss/voxly-oss/blob/main/PRIVACY.md"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-violet-400/70 hover:text-violet-400 underline-offset-2 hover:underline transition-colors"
                                 >
                                     Privacy Policy
-                                </button>
+                                </a>
                                 .
                             </p>
 

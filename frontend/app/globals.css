@@ -56,8 +56,17 @@
    page, auth screens, docs, and /voxly-admin are unaffected and
    keep the existing cosmic theme untouched.
    Source: design-reference/Voxly Design Language.dc.html
+
+   body:has(.voxly-app-shell) — Radix Dialog, DropdownMenu and the
+   root <Toaster /> portal into <body>, i.e. OUTSIDE the shell div.
+   Without this they resolved against the :root cosmic tokens: violet
+   primary buttons inside every modal, and every --voxly-* var
+   undefined (so text-voxly-heat, bg-voxly-heat-soft etc. silently
+   dropped). Mirroring the tokens onto <body> while the shell is
+   mounted makes portalled content inherit the same theme.
    ============================================================ */
-.voxly-app-shell {
+.voxly-app-shell,
+body:has(.voxly-app-shell) {
   --background: 240 6% 4%;
   --foreground: 0 0% 96%;
   --card: 240 11% 9%;
@@ -75,7 +84,9 @@
   --destructive: 345 100% 65%;
   --destructive-foreground: 0 0% 98%;
   --border: 240 5% 16%;
-  --input: 240 5% 16%;
+  /* Design Language --border-strong (rgba(255,255,255,.16) over bg/surface-2) —
+     inputs and secondary buttons sit a step above plain dividers. */
+  --input: 240 3% 22%;
   --ring: 76 86% 63%;
   --radius: 0.625rem;
 
