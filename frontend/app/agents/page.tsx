@@ -207,7 +207,7 @@ export default function AgentsPage() {
                         <Link href="/chat" className="font-semibold text-[13px] text-voxly-ink-6 hover:text-foreground border border-border hover:border-voxly-ink-4 rounded-lg px-3.5 py-2 transition-colors whitespace-nowrap">
                             Test
                         </Link>
-                        <button className="font-semibold text-[13px] bg-secondary hover:bg-accent text-foreground border border-voxly-ink-4 rounded-lg px-3.5 py-2 transition-colors whitespace-nowrap">
+                        <button disabled title="Preview — the agent can't be paused from here yet" className="font-semibold text-[13px] bg-secondary text-foreground border border-voxly-ink-4 rounded-lg px-3.5 py-2 whitespace-nowrap opacity-50 cursor-not-allowed">
                             Pause
                         </button>
                     </div>
@@ -259,7 +259,8 @@ export default function AgentsPage() {
                 {/* Executions */}
                 <div className="flex items-center gap-4 flex-wrap">
                     <span className="font-display font-semibold text-[15px] text-foreground">Executions</span>
-                    <a href="#" className="text-xs">View full logs →</a>
+                    {/* The agent's real activity log is the conversation history. */}
+                    <Link href="/messages" className="text-xs text-primary hover:underline">View conversations →</Link>
                     <div className="flex-1" />
                     <div className="flex gap-1.5 flex-wrap">
                         {['All', 'Conversations', 'Tool calls', 'Failed', 'Automations'].map((f, i) => (
@@ -282,7 +283,7 @@ export default function AgentsPage() {
                                         <div className="text-[11.5px] text-voxly-ink-5 truncate">{item.sub}</div>
                                     </div>
                                     <span className="text-[9.5px] uppercase tracking-wide text-voxly-ink-5 flex-none">{item.tag}</span>
-                                    {item.retry && <a href="#" className="text-[11.5px] flex-none">Retry</a>}
+                                    {item.retry && <span className="text-[11.5px] text-voxly-ink-5 flex-none" title="Preview — retry isn't available yet">Retry</span>}
                                     {item.dot && <span className="w-1.5 h-1.5 rounded-full bg-primary flex-none" />}
                                     <span className="font-mono text-[11px] text-voxly-ink-5 flex-none w-7 text-right">{item.time}</span>
                                 </div>
@@ -344,7 +345,7 @@ export default function AgentsPage() {
                     <PanelRow dot="bg-voxly-success" label="Deployment" value="Production" />
                     <PanelRow dot="bg-voxly-ink-5" label="Version" value={<span className="font-mono font-normal">{agent.deployVersion}</span>} />
                     <PanelRow dot="bg-voxly-success" label="Last test run" value={agent.testStatus} />
-                    <PanelText><a href="#">Run test suite →</a></PanelText>
+                    <PanelText><Link href="/chat" className="text-primary hover:underline">Try the agent in chat →</Link></PanelText>
                 </Panel>
             </div>
         </div>

@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
-import { authAPI } from '@/lib/api';
+import { authAPI, getApiErrorMessage } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -12,7 +12,7 @@ import {
 } from '@/components/ui/dialog';
 import { Loader2, AlertTriangle } from 'lucide-react';
 import SettingsShell from '@/components/SettingsShell';
-import { Panel, PanelText } from '@/components/SidePanel';
+import { HelpLinks, Panel } from '@/components/SidePanel';
 
 export default function DangerZoneSettingsPage() {
     const { logout } = useAuth();
@@ -37,8 +37,8 @@ export default function DangerZoneSettingsPage() {
             a.remove();
             URL.revokeObjectURL(url);
             toast({ title: 'Export ready', description: 'Your data export has been downloaded.' });
-        } catch (err: any) {
-            toast({ title: 'Error', description: err.response?.data?.detail || 'Failed to export data.', variant: 'destructive' });
+        } catch (err) {
+            toast({ title: 'Couldn’t export data', description: getApiErrorMessage(err, 'Please try again.'), variant: 'destructive' });
         } finally {
             setIsExporting(false);
         }
@@ -51,8 +51,8 @@ export default function DangerZoneSettingsPage() {
             toast({ title: 'Account deleted', description: 'Your account and all data have been permanently deleted.' });
             logout();
             router.push('/login');
-        } catch (err: any) {
-            toast({ title: 'Error', description: err.response?.data?.detail || 'Failed to delete account.', variant: 'destructive' });
+        } catch (err) {
+            toast({ title: 'Couldn’t delete account', description: getApiErrorMessage(err, 'Please try again.'), variant: 'destructive' });
         } finally {
             setIsDeleting(false);
         }
@@ -82,7 +82,7 @@ export default function DangerZoneSettingsPage() {
                                 <div className="text-[13px] text-foreground font-medium">Export your data</div>
                                 <div className="text-[11.5px] text-voxly-ink-5 mt-0.5">Clients, projects, and AI key metadata as a JSON file.</div>
                             </div>
-                            <Button onClick={handleExport} disabled={isExporting} className="font-semibold text-[12.5px] bg-secondary hover:bg-accent text-foreground border border-voxly-ink-4 rounded-lg px-3.5 py-2 h-auto flex-none whitespace-nowrap">
+                            <Button variant="outline" onClick={handleExport} disabled={isExporting} className="font-semibold text-[12.5px] rounded-lg px-3.5 py-2 h-auto flex-none whitespace-nowrap">
                                 {isExporting ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : null}
                                 Export data
                             </Button>
@@ -92,7 +92,7 @@ export default function DangerZoneSettingsPage() {
                                 <div className="text-[13px] text-foreground font-medium">Delete account</div>
                                 <div className="text-[11.5px] text-voxly-ink-5 mt-0.5">Permanently deletes all data. Cannot be undone.</div>
                             </div>
-                            <Button onClick={() => setDeleteOpen(true)} className="font-semibold text-[12.5px] bg-voxly-heat-soft hover:bg-voxly-heat-soft/70 text-voxly-heat border border-voxly-heat/30 rounded-lg px-3.5 py-2 h-auto flex-none whitespace-nowrap">
+                            <Button variant="destructive" onClick={() => setDeleteOpen(true)} className="text-[12.5px] rounded-lg px-3.5 py-2 h-auto flex-none whitespace-nowrap">
                                 Delete account
                             </Button>
                         </div>
@@ -105,39 +105,45 @@ export default function DangerZoneSettingsPage() {
                         <div className="text-xs text-foreground/90 leading-relaxed">These actions are restricted to your account and cannot be delegated. Export or confirm before proceeding.</div>
                     </div>
                     <Panel title="Need Help?" defaultOpen={false}>
-                        <PanelText>
-                            <a href="#">Settings documentation →</a><br /><a href="#">Contact support →</a>
-                        </PanelText>
+                        <HelpLinks />
                     </Panel>
                 </div>
             </div>
 
-            <Dialog open={deleteOpen} onOpenChange={(open) => { setDeleteOpen(open); if (!open) setDeleteConfirmText(''); }}>
-                <DialogContent className="bg-card border-border">
+            <Dialog open={deleteOpen} onOpenChange={(open) => { if (isDeleting) return; setDeleteOpen(open); if (!open) setDeleteConfirmText(''); }}>
+                <DialogContent>
                     <DialogHeader>
-                        <DialogTitle className="text-foreground flex items-center gap-2">
+                        <DialogTitle className="flex items-center gap-2">
                             <AlertTriangle className="w-4 h-4 text-voxly-heat" /> Delete account
                         </DialogTitle>
-                        <DialogDescription className="text-voxly-ink-6">
+                        <DialogDescription className="text-voxly-ink-6 leading-relaxed">
                             This permanently deletes your account, clients, projects, and all associated data. This cannot be undone.
                             Type <span className="font-mono text-foreground font-semibold">DELETE</span> to confirm.
                         </DialogDescription>
                     </DialogHeader>
-                    <Input
-                        value={deleteConfirmText}
-                        onChange={(e) => setDeleteConfirmText(e.target.value)}
-                        placeholder="DELETE"
-                        className="bg-background border-voxly-ink-4 font-mono"
-                    />
-                    <DialogFooter>
-                        <Button variant="outline" onClick={() => setDeleteOpen(false)} className="border-border text-foreground hover:bg-accent">
-                            Cancel
-                        </Button>
-                        <Button variant="destructive" onClick={handleDelete} disabled={deleteConfirmText !== 'DELETE' || isDeleting}>
-                            {isDeleting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
-                            Delete permanently
-                        </Button>
-                    </DialogFooter>
+                    <form
+                        className="contents"
+                        onSubmit={(e) => { e.preventDefault(); if (deleteConfirmText === 'DELETE' && !isDeleting) handleDelete(); }}
+                    >
+                        <Input
+                            value={deleteConfirmText}
+                            onChange={(e) => setDeleteConfirmText(e.target.value)}
+                            placeholder="DELETE"
+                            aria-label="Type DELETE to confirm"
+                            autoComplete="off"
+                            spellCheck={false}
+                            className="font-mono"
+                        />
+                        <DialogFooter>
+                            <Button type="button" variant="outline" onClick={() => setDeleteOpen(false)} disabled={isDeleting}>
+                                Cancel
+                            </Button>
+                            <Button type="submit" variant="destructive" disabled={deleteConfirmText !== 'DELETE' || isDeleting}>
+                                {isDeleting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+                                Delete permanently
+                            </Button>
+                        </DialogFooter>
+                    </form>
                 </DialogContent>
             </Dialog>
         </SettingsShell>

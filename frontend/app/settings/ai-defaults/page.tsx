@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useToast } from '@/hooks/use-toast';
-import { aiKeysAPI } from '@/lib/api';
+import { aiKeysAPI, getApiErrorMessage } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -10,8 +10,9 @@ import {
     CheckCircle2, XCircle, HelpCircle, X as XIcon,
 } from 'lucide-react';
 import SettingsShell from '@/components/SettingsShell';
-import { SettingsRow, Toggle, ValueButton } from '@/components/SettingsRow';
-import { Panel, PanelText } from '@/components/SidePanel';
+import { SettingsRow, StatusPill } from '@/components/SettingsRow';
+import { HelpLinks, Panel, PanelText } from '@/components/SidePanel';
+import ConfirmDialog from '@/components/ConfirmDialog';
 import AIProviderIcon from '@/components/AIProviderIcon';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -20,11 +21,8 @@ interface AIKeyData { id: string; provider: string; provider_name: string; label
 
 export default function AIDefaultsSettingsPage() {
     const { toast } = useToast();
-
-    // Default AI behavior — no backend field for per-workspace AI defaults yet;
-    // these are local-only display/interaction, not persisted.
-    const [autoEscalate, setAutoEscalate] = useState(true);
-    const [workingHoursOnly, setWorkingHoursOnly] = useState(false);
+    const [keyToRemove, setKeyToRemove] = useState<{ id: string; providerName: string } | null>(null);
+    const [isRemoving, setIsRemoving] = useState(false);
 
     // Real BYOK provider key management, migrated from the old /settings tabs.
     const [providers, setProviders] = useState<AIKeyProvider[]>([]);
@@ -57,21 +55,27 @@ export default function AIDefaultsSettingsPage() {
             setAddingProvider(null);
             fetchKeys();
             toast({ title: 'AI key added', description: `Your ${provider} key has been saved securely.` });
-        } catch (err: any) {
-            toast({ title: 'Error', description: err.response?.data?.detail || 'Failed to add key.', variant: 'destructive' });
+        } catch (err) {
+            toast({ title: 'Couldn’t add key', description: getApiErrorMessage(err, 'Please check the key and try again.'), variant: 'destructive' });
         } finally {
             setIsAdding(false);
         }
     };
 
-    const handleDelete = async (id: string, providerName: string) => {
-        if (!confirm(`Remove your ${providerName} key?`)) return;
+    // Confirmed through ConfirmDialog — was a native window.confirm().
+    const handleDelete = async () => {
+        if (!keyToRemove) return;
+        const { id, providerName } = keyToRemove;
+        setIsRemoving(true);
         try {
             await aiKeysAPI.delete(id);
             fetchKeys();
             toast({ title: 'Key removed', description: `${providerName} key has been removed.` });
-        } catch {
-            toast({ title: 'Error', description: 'Failed to remove key.', variant: 'destructive' });
+            setKeyToRemove(null);
+        } catch (err) {
+            toast({ title: 'Couldn’t remove key', description: getApiErrorMessage(err, 'Please try again.'), variant: 'destructive' });
+        } finally {
+            setIsRemoving(false);
         }
     };
 
@@ -80,9 +84,13 @@ export default function AIDefaultsSettingsPage() {
         try {
             const res = await aiKeysAPI.validate(id);
             fetchKeys();
-            toast({ title: res.data.is_valid ? 'Valid' : 'Invalid', description: res.data.message });
-        } catch {
-            toast({ title: 'Error', description: 'Validation failed.', variant: 'destructive' });
+            toast({
+                title: res.data.is_valid ? 'Key is valid' : 'Key is invalid',
+                description: res.data.message,
+                variant: res.data.is_valid ? 'default' : 'destructive',
+            });
+        } catch (err) {
+            toast({ title: 'Couldn’t validate key', description: getApiErrorMessage(err, 'Please try again.'), variant: 'destructive' });
         } finally {
             setValidatingId(null);
         }
@@ -97,18 +105,21 @@ export default function AIDefaultsSettingsPage() {
                         <p className="text-[13px] text-voxly-ink-6 mt-[3px]">Default model and behavior for new AI Agent configurations</p>
                     </div>
 
+                    {/* No per-workspace AI-behavior fields exist on the backend. These
+                        were a fake "GPT-4o" dropdown and two toggles that reset on
+                        reload while reading as safety settings — now truthful. */}
                     <div className="border border-border rounded-[14px] bg-card overflow-hidden">
-                        <SettingsRow label="Default AI model" description="Used for new AI Agent configurations.">
-                            <ValueButton>GPT-4o</ValueButton>
+                        <SettingsRow label="Default AI model" description="Replies use your provider key below, with that provider’s default model.">
+                            <StatusPill />
                         </SettingsRow>
                         <SettingsRow label="Default response tone">
-                            <ValueButton>Professional</ValueButton>
+                            <StatusPill />
                         </SettingsRow>
-                        <SettingsRow label="Auto-escalate to a human when uncertain" description="Hands off to the assigned PM instead of guessing.">
-                            <Toggle checked={autoEscalate} onChange={setAutoEscalate} />
+                        <SettingsRow label="Auto-escalate to a human when uncertain" description="Today you can take over any conversation from Conversations.">
+                            <StatusPill />
                         </SettingsRow>
                         <SettingsRow label="Respond only during working hours">
-                            <Toggle checked={workingHoursOnly} onChange={setWorkingHoursOnly} />
+                            <StatusPill />
                         </SettingsRow>
                     </div>
 
@@ -149,18 +160,18 @@ export default function AIDefaultsSettingsPage() {
                                             <div className="flex items-center gap-1">
                                                 {existingKey ? (
                                                     <>
-                                                        <Button size="sm" variant="ghost" className="h-8 px-2.5 text-voxly-ink-5 hover:text-foreground" onClick={() => handleValidate(existingKey.id)} disabled={validatingId === existingKey.id}>
+                                                        <Button size="sm" variant="ghost" title="Test this key" aria-label={`Test ${provider.name} key`} className="h-8 px-2.5 text-voxly-ink-5 hover:text-foreground" onClick={() => handleValidate(existingKey.id)} disabled={validatingId === existingKey.id}>
                                                             {validatingId === existingKey.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
                                                         </Button>
-                                                        <Button size="sm" variant="ghost" className="h-8 px-2.5 text-voxly-ink-5 hover:text-voxly-heat" onClick={() => handleDelete(existingKey.id, provider.name)}>
-                                                            <Trash2 className="w-3.5 h-3.5" />
-                                                        </Button>
-                                                        <Button size="sm" variant="ghost" className="h-8 px-2.5 text-voxly-ink-5 hover:text-voxly-violet" onClick={() => { setAddingProvider(provider.id); setNewKeyValue(''); }}>
+                                                        <Button size="sm" variant="ghost" title="Replace key" aria-label={`Replace ${provider.name} key`} className="h-8 px-2.5 text-voxly-ink-5 hover:text-foreground" onClick={() => { setAddingProvider(provider.id); setNewKeyValue(''); }}>
                                                             <RotateCw className="w-3.5 h-3.5" />
+                                                        </Button>
+                                                        <Button size="sm" variant="ghost" title="Remove key" aria-label={`Remove ${provider.name} key`} className="h-8 px-2.5 text-voxly-ink-5 hover:text-voxly-heat hover:bg-voxly-heat-soft" onClick={() => setKeyToRemove({ id: existingKey.id, providerName: provider.name })}>
+                                                            <Trash2 className="w-3.5 h-3.5" />
                                                         </Button>
                                                     </>
                                                 ) : (
-                                                    <Button size="sm" className="h-8 bg-secondary hover:bg-accent text-foreground border border-border" onClick={() => { setAddingProvider(provider.id); setNewKeyValue(''); }}>
+                                                    <Button size="sm" variant="outline" className="h-8 font-semibold" onClick={() => { setAddingProvider(provider.id); setNewKeyValue(''); }}>
                                                         <Plus className="w-3.5 h-3.5 mr-1" /> Add key
                                                     </Button>
                                                 )}
@@ -169,15 +180,29 @@ export default function AIDefaultsSettingsPage() {
                                         <AnimatePresence>
                                             {isAddingThis && (
                                                 <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
-                                                    <div className="mt-3 pt-3 border-t border-border flex gap-2">
-                                                        <Input type="password" placeholder={provider.placeholder} value={newKeyValue} onChange={e => setNewKeyValue(e.target.value)} className="flex-1 font-mono text-sm bg-background border-border" />
-                                                        <Button onClick={() => handleAdd(provider.id)} disabled={isAdding || !newKeyValue.trim()} className="bg-primary hover:bg-primary/90 text-primary-foreground h-10 px-4">
+                                                    <form
+                                                        className="mt-3 pt-3 border-t border-border flex gap-2"
+                                                        onSubmit={(e) => { e.preventDefault(); handleAdd(provider.id); }}
+                                                    >
+                                                        <Input
+                                                            type="password"
+                                                            autoFocus
+                                                            autoComplete="off"
+                                                            aria-label={`${provider.name} API key`}
+                                                            placeholder={provider.placeholder}
+                                                            value={newKeyValue}
+                                                            onChange={e => setNewKeyValue(e.target.value)}
+                                                            onKeyDown={e => { if (e.key === 'Escape') setAddingProvider(null); }}
+                                                            className="flex-1 font-mono"
+                                                        />
+                                                        <Button type="submit" disabled={isAdding || !newKeyValue.trim()} className="h-10 px-4 gap-1.5 font-semibold">
                                                             {isAdding ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                                                            <span className="hidden sm:inline">Save</span>
                                                         </Button>
-                                                        <Button variant="ghost" onClick={() => setAddingProvider(null)} className="h-10 px-3 text-voxly-ink-5">
+                                                        <Button type="button" variant="ghost" aria-label="Cancel" onClick={() => setAddingProvider(null)} className="h-10 px-3 text-voxly-ink-5">
                                                             <XIcon className="w-4 h-4" />
                                                         </Button>
-                                                    </div>
+                                                    </form>
                                                     <a href={provider.docs_url} target="_blank" rel="noreferrer" className="text-xs text-primary mt-2 inline-flex items-center gap-1">
                                                         Get your API key <ExternalLink className="w-3 h-3" />
                                                     </a>
@@ -196,12 +221,20 @@ export default function AIDefaultsSettingsPage() {
                         <PanelText>No recent changes.</PanelText>
                     </Panel>
                     <Panel title="Need Help?" defaultOpen={false}>
-                        <PanelText>
-                            <a href="#">Settings documentation →</a><br /><a href="#">Contact support →</a>
-                        </PanelText>
+                        <HelpLinks />
                     </Panel>
                 </div>
             </div>
+
+            <ConfirmDialog
+                open={!!keyToRemove}
+                onOpenChange={(open) => { if (!open) setKeyToRemove(null); }}
+                title={`Remove your ${keyToRemove?.providerName ?? ''} key?`}
+                description="Voxly will stop using this key for AI replies. You can add it again any time."
+                confirmLabel="Remove key"
+                pending={isRemoving}
+                onConfirm={handleDelete}
+            />
         </SettingsShell>
     );
 }

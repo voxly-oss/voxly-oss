@@ -6,7 +6,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import Link from 'next/link';
 import { useAuth } from '@/hooks/useAuth';
-import { authAPI } from '@/lib/api';
+import { authAPI, getApiErrorMessage } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -112,12 +112,10 @@ export default function LoginPage() {
                 description: 'Successfully logged in.',
             });
         } catch (err) {
-            const error = err as { response?: { data?: { detail?: string } } };
             toast({
                 variant: 'destructive',
                 title: 'Login failed',
-                description:
-                    error.response?.data?.detail || 'Invalid email or password.',
+                description: getApiErrorMessage(err, 'Invalid email or password.'),
             });
         } finally {
             setIsLoading(false);
@@ -163,17 +161,14 @@ export default function LoginPage() {
                         return;
                     }
                     try {
-                        // Get ID token from access token
+                        // Profile for the welcome toast only. (A tokeninfo call that put
+                        // the access token in a URL query and whose result was unused
+                        // has been removed.)
                         const userInfoResponse = await fetch(
                             `https://www.googleapis.com/oauth2/v3/userinfo`,
                             { headers: { Authorization: `Bearer ${response.access_token}` } }
                         );
                         const userInfo = await userInfoResponse.json();
-
-                        // Use the access_token to get an id_token via tokeninfo
-                        await fetch(
-                            `https://oauth2.googleapis.com/tokeninfo?access_token=${response.access_token}`
-                        );
 
                         // Send the access token to our backend for verification
                         await loginWithGoogle(response.access_token);
@@ -182,12 +177,10 @@ export default function LoginPage() {
                             description: `Signed in as ${userInfo.email}`,
                         });
                     } catch (err) {
-                        const error = err as { response?: { data?: { detail?: string } } };
                         toast({
                             variant: 'destructive',
                             title: 'Login failed',
-                            description:
-                                error.response?.data?.detail || 'Google sign-in failed.',
+                            description: getApiErrorMessage(err, 'Google sign-in failed.'),
                         });
                     } finally {
                         setIsGoogleLoading(false);
@@ -425,16 +418,9 @@ export default function LoginPage() {
                                 )}
                             </div>
 
-                            <div className="flex items-center justify-between">
-                                <label className="flex items-center gap-2 text-xs text-white/30 cursor-pointer group">
-                                    <input
-                                        type="checkbox"
-                                        className="rounded-[4px] bg-white/5 border-white/10 text-violet-600 focus:ring-violet-500/20 w-3.5 h-3.5"
-                                    />
-                                    <span className="group-hover:text-white/50 transition-colors">
-                                        Remember me
-                                    </span>
-                                </label>
+                            {/* "Remember me" removed: it was an unwired checkbox — sessions
+                                already persist (token in localStorage) either way. */}
+                            <div className="flex items-center justify-end">
                                 <Link
                                     href="/forgot-password"
                                     className="text-xs text-violet-400/70 hover:text-violet-400 transition-colors"

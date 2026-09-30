@@ -180,8 +180,9 @@ export default function AutomationsPage() {
                         </div>
                     </div>
                     <div className="flex items-center gap-2 flex-none">
-                        <button className="font-semibold text-[13px] text-voxly-ink-6 hover:text-foreground border border-border hover:border-voxly-ink-4 rounded-lg px-3.5 py-2 transition-colors whitespace-nowrap">Pause</button>
-                        <button className="font-semibold text-[13px] bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg px-3.5 py-2 transition-colors whitespace-nowrap">Retry now</button>
+                        {/* Preview: there is no workflow engine to pause or retry. */}
+                        <button disabled title="Preview — workflows can't be paused yet" className="font-semibold text-[13px] text-voxly-ink-6 border border-border rounded-lg px-3.5 py-2 whitespace-nowrap opacity-50 cursor-not-allowed">Pause</button>
+                        <button disabled title="Preview — workflows can't be retried yet" className="font-semibold text-[13px] bg-primary/60 text-primary-foreground rounded-lg px-3.5 py-2 whitespace-nowrap cursor-not-allowed">Retry now</button>
                     </div>
                 </div>
 
@@ -225,15 +226,17 @@ export default function AutomationsPage() {
                         <div className="font-mono text-[9.5px] font-bold tracking-[0.07em] text-voxly-warning mb-2.5">APPROVAL CHECKPOINT</div>
                         <div className="flex items-center gap-2.5">
                             <span className="flex-1 text-[12.5px] text-foreground/90 leading-relaxed">{selected.approval}</span>
-                            <button className="w-[26px] h-[26px] rounded-[7px] border border-voxly-ink-4 text-voxly-success flex items-center justify-center hover:bg-voxly-success-soft transition-colors flex-none"><Check className="w-3.5 h-3.5" /></button>
-                            <button className="w-[26px] h-[26px] rounded-[7px] border border-voxly-ink-4 text-voxly-ink-5 flex items-center justify-center hover:bg-voxly-surface-3 transition-colors flex-none"><XIcon className="w-3 h-3" /></button>
+                            {/* Preview: no approval queue exists. These looked like they
+                                approved an outbound client message and did nothing. */}
+                            <button disabled aria-label="Approve (preview — not available)" title="Preview — approvals aren't wired to a real queue yet" className="w-[26px] h-[26px] rounded-[7px] border border-voxly-ink-4 text-voxly-success flex items-center justify-center flex-none opacity-50 cursor-not-allowed"><Check className="w-3.5 h-3.5" /></button>
+                            <button disabled aria-label="Reject (preview — not available)" title="Preview — approvals aren't wired to a real queue yet" className="w-[26px] h-[26px] rounded-[7px] border border-voxly-ink-4 text-voxly-ink-5 flex items-center justify-center flex-none opacity-50 cursor-not-allowed"><XIcon className="w-3 h-3" /></button>
                         </div>
                     </div>
                 )}
 
                 <div className="flex items-center gap-4">
                     <span className="font-display font-semibold text-[15px] text-foreground">Execution Timeline</span>
-                    <a href="#" className="text-xs">View full logs →</a>
+                    <span className="text-xs text-voxly-ink-5">Full logs coming soon</span>
                 </div>
                 <div className="border border-border rounded-[14px] bg-card overflow-hidden">
                     <div className="px-4 py-2 bg-voxly-surface-2 font-mono text-[9.5px] font-bold tracking-[0.07em] text-voxly-ink-5">TODAY</div>
@@ -248,7 +251,7 @@ export default function AutomationsPage() {
                                 <div className="text-[11.5px] text-voxly-ink-5 truncate">{item.sub}</div>
                             </div>
                             <span className="text-[9.5px] uppercase tracking-wide text-voxly-ink-5 flex-none">{item.tag}</span>
-                            {item.retry && <a href="#" className="text-[11.5px] flex-none">Retry</a>}
+                            {item.retry && <span className="text-[11.5px] text-voxly-ink-5 flex-none" title="Preview — retry isn't available yet">Retry</span>}
                             <span className="font-mono text-[11px] text-voxly-ink-5 flex-none w-7 text-right">{item.time}</span>
                         </div>
                     ))}

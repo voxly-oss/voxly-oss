@@ -5,12 +5,12 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
-import { authAPI } from '@/lib/api';
+import { authAPI, getApiErrorMessage } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Loader2, Save } from 'lucide-react';
 import SettingsShell from '@/components/SettingsShell';
-import { SettingsRow, ValueButton, StaticValue } from '@/components/SettingsRow';
-import { Panel, PanelRow, PanelLink, PanelText } from '@/components/SidePanel';
+import { SettingsRow, StatusPill, StaticValue } from '@/components/SettingsRow';
+import { HelpLinks, Panel, PanelRow, PanelText } from '@/components/SidePanel';
 import { useState } from 'react';
 
 const profileSchema = z.object({
@@ -38,8 +38,8 @@ export default function GeneralSettingsPage() {
             await authAPI.updateProfile({ full_name: data.full_name, agency_name: data.agency_name });
             await refreshUser();
             toast({ title: 'Saved', description: 'Your workspace settings have been updated.' });
-        } catch (err: any) {
-            toast({ title: 'Error', description: err.response?.data?.detail || 'Failed to save changes.', variant: 'destructive' });
+        } catch (err) {
+            toast({ title: 'Couldn’t save changes', description: getApiErrorMessage(err, 'Please try again.'), variant: 'destructive' });
         } finally {
             setIsSaving(false);
         }
@@ -59,34 +59,34 @@ export default function GeneralSettingsPage() {
                             <SettingsRow label="Workspace name" description="Shown to clients in AI replies and on invoices.">
                                 <input
                                     {...register('agency_name')}
-                                    className="text-[13px] text-foreground bg-background border border-voxly-ink-4 rounded-lg px-3 py-2 min-w-[180px] text-right focus:outline-none focus:border-primary transition-colors"
+                                    aria-label="Workspace name"
+                                    aria-invalid={!!errors.agency_name}
+                                    className="text-[13px] text-foreground bg-background border border-voxly-ink-4 rounded-lg px-3 py-2 min-w-[180px] text-right focus:outline-none focus:border-primary focus:ring-[3px] focus:ring-primary/15 aria-[invalid=true]:border-destructive transition-colors"
                                 />
-                                {errors.agency_name && <p className="text-[11px] text-voxly-heat mt-1 text-right">{errors.agency_name.message}</p>}
+                                {errors.agency_name && <p role="alert" className="text-[11px] text-destructive mt-1 text-right">{errors.agency_name.message}</p>}
                             </SettingsRow>
                             <SettingsRow label="Full name">
                                 <input
                                     {...register('full_name')}
-                                    className="text-[13px] text-foreground bg-background border border-voxly-ink-4 rounded-lg px-3 py-2 min-w-[180px] text-right focus:outline-none focus:border-primary transition-colors"
+                                    aria-label="Full name"
+                                    aria-invalid={!!errors.full_name}
+                                    className="text-[13px] text-foreground bg-background border border-voxly-ink-4 rounded-lg px-3 py-2 min-w-[180px] text-right focus:outline-none focus:border-primary focus:ring-[3px] focus:ring-primary/15 aria-[invalid=true]:border-destructive transition-colors"
                                 />
-                                {errors.full_name && <p className="text-[11px] text-voxly-heat mt-1 text-right">{errors.full_name.message}</p>}
+                                {errors.full_name && <p role="alert" className="text-[11px] text-destructive mt-1 text-right">{errors.full_name.message}</p>}
                             </SettingsRow>
                             <SettingsRow label="Email" description="Contact support to change your account email.">
                                 <StaticValue>{user?.email}</StaticValue>
                             </SettingsRow>
-                            {/* Locale preferences below have no backend field yet — display-only. */}
-                            <SettingsRow label="Timezone" description="Used for schedules, digests, and timestamps.">
-                                <ValueButton>America/New_York</ValueButton>
-                            </SettingsRow>
-                            <SettingsRow label="Date format">
-                                <ValueButton>MM/DD/YYYY</ValueButton>
-                            </SettingsRow>
-                            <SettingsRow label="Language">
-                                <ValueButton>English (US)</ValueButton>
+                            {/* No workspace locale fields exist on the backend. The old rows
+                                showed invented values (America/New_York, MM/DD/YYYY) in fake
+                                dropdowns; timestamps really follow the viewer's browser. */}
+                            <SettingsRow label="Timezone, date format & language" description="Times and dates follow each viewer’s browser settings. Workspace-level defaults are coming soon.">
+                                <StatusPill>From your browser</StatusPill>
                             </SettingsRow>
                         </div>
                         {isDirty && (
                             <div className="flex justify-end mt-3">
-                                <Button type="submit" disabled={isSaving} className="bg-primary hover:bg-primary/90 text-primary-foreground font-semibold text-[13px] rounded-lg px-4 py-[9px] h-auto gap-2">
+                                <Button type="submit" disabled={isSaving} className="font-semibold text-[13px] rounded-lg px-4 py-[9px] h-auto gap-2">
                                     {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
                                     Save changes
                                 </Button>
@@ -104,8 +104,7 @@ export default function GeneralSettingsPage() {
                         <PanelText>No recent changes.</PanelText>
                     </Panel>
                     <Panel title="Need Help?" defaultOpen={false}>
-                        <PanelLink>Settings documentation →</PanelLink>
-                        <PanelLink>Contact support →</PanelLink>
+                        <HelpLinks />
                     </Panel>
                 </div>
             </div>

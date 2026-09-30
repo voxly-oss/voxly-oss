@@ -294,7 +294,7 @@ export default function APIKeysSettingsPage() {
 
             {/* Generate */}
             <Dialog open={createOpen} onOpenChange={(open) => { if (!createMutation.isPending) { setCreateOpen(open); if (!open) setNewLabel(''); } }}>
-                <DialogContent className="bg-card border-border">
+                <DialogContent>
                     <DialogHeader>
                         <DialogTitle className="text-foreground">Generate new API key</DialogTitle>
                         <DialogDescription className="text-voxly-ink-6">Give it a label so you can identify it later.</DialogDescription>
@@ -324,7 +324,7 @@ export default function APIKeysSettingsPage() {
 
             {/* Reveal — the one and only time the secret is visible */}
             <Dialog open={!!revealed} onOpenChange={(open) => { if (!open) closeReveal(); }}>
-                <DialogContent className="bg-card border-border">
+                <DialogContent>
                     <DialogHeader>
                         <DialogTitle className="text-voxly-success flex items-center gap-2">
                             <Check className="w-4 h-4" /> API key {revealed?.origin === 'rotated' ? 'rotated' : 'created'}
@@ -356,7 +356,7 @@ export default function APIKeysSettingsPage() {
 
             {/* Rotate confirmation */}
             <Dialog open={!!confirmRotate} onOpenChange={(open) => { if (!open && !rotateMutation.isPending) setConfirmRotate(null); }}>
-                <DialogContent className="bg-card border-border">
+                <DialogContent>
                     <DialogHeader>
                         <DialogTitle className="text-foreground flex items-center gap-2"><RotateCw className="w-4 h-4" /> Rotate key</DialogTitle>
                         <DialogDescription className="text-voxly-ink-6">
@@ -375,7 +375,7 @@ export default function APIKeysSettingsPage() {
 
             {/* Revoke confirmation */}
             <Dialog open={!!confirmRevoke} onOpenChange={(open) => { if (!open && !revokeMutation.isPending) setConfirmRevoke(null); }}>
-                <DialogContent className="bg-card border-border">
+                <DialogContent>
                     <DialogHeader>
                         <DialogTitle className="text-voxly-heat flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> Revoke key</DialogTitle>
                         <DialogDescription className="text-voxly-ink-6">

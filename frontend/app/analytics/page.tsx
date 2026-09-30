@@ -1,6 +1,5 @@
 'use client';
 
-import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { clientsAPI, projectsAPI, dashboardAPI } from '@/lib/api';
 import { Download } from 'lucide-react';
@@ -24,7 +23,6 @@ function Sparkline({ points, color, width = 52, height = 22 }: { points: string;
 const RANGES = ['7D', '30D', '90D', 'Custom'] as const;
 
 export default function AnalyticsPage() {
-    const [range, setRange] = useState<typeof RANGES[number]>('30D');
 
     const { data: clients = [] } = useQuery({ queryKey: ['clients'], queryFn: async () => (await clientsAPI.list()).data });
     const { data: projects = [] } = useQuery({ queryKey: ['projects'], queryFn: async () => (await projectsAPI.list()).data });
@@ -45,28 +43,29 @@ export default function AnalyticsPage() {
                 <div className="flex items-end justify-between gap-4 flex-wrap">
                     <div>
                         <h1 className="font-display font-bold text-[22px] text-foreground tracking-[-0.01em]">Analytics</h1>
-                        <p className="text-[13px] text-voxly-ink-6 mt-[3px]">Last {range === 'Custom' ? '30' : range.replace('D', '')} days · updated just now</p>
+                        {/* The range chips only ever rewrote this line — no query took a
+                            date range, so "Last 7 days" showed the same numbers as 90. */}
+                        <p className="text-[13px] text-voxly-ink-6 mt-[3px]">Current totals · updated just now</p>
                     </div>
-                    <button className="flex items-center gap-1.5 text-[13px] font-semibold text-voxly-ink-6 border border-border hover:border-voxly-ink-4 hover:text-foreground rounded-lg px-3.5 py-[9px] transition-colors">
+                    <button disabled title="Report export isn't available yet" className="flex items-center gap-1.5 text-[13px] font-semibold text-voxly-ink-6 border border-border rounded-lg px-3.5 py-[9px] opacity-50 cursor-not-allowed">
                         <Download className="w-3.5 h-3.5" /> Export report
                     </button>
                 </div>
 
-                <div className="flex items-center gap-2 flex-wrap">
+                <div className="flex items-center gap-2 flex-wrap" title="Date ranges and filters are coming soon">
                     {RANGES.map(r => (
                         <button
                             key={r}
-                            onClick={() => setRange(r)}
-                            className={`text-[11.5px] rounded-full px-[11px] py-[5px] transition-colors ${
-                                range === r ? 'font-semibold text-primary-foreground bg-primary' : 'text-voxly-ink-6 border border-border hover:border-voxly-ink-4 hover:text-foreground'
-                            }`}>
+                            disabled
+                            className="text-[11.5px] rounded-full px-[11px] py-[5px] text-voxly-ink-6 border border-border opacity-50 cursor-not-allowed">
                             {r}
                         </button>
                     ))}
                     <div className="w-px h-5 bg-border mx-1" />
                     {['Client', 'Project', 'Agent', 'Channel'].map(f => (
-                        <span key={f} className="text-[11.5px] text-voxly-ink-6 border border-border hover:border-voxly-ink-4 hover:text-foreground rounded-lg px-[11px] py-[5px] cursor-pointer transition-colors">{f}</span>
+                        <span key={f} aria-disabled="true" className="text-[11.5px] text-voxly-ink-6 border border-border rounded-lg px-[11px] py-[5px] opacity-50 cursor-not-allowed">{f}</span>
                     ))}
+                    <span className="text-[11px] text-voxly-ink-5 ml-1">Ranges &amp; filters coming soon</span>
                 </div>
 
                 <PreviewBanner>
@@ -261,7 +260,8 @@ export default function AnalyticsPage() {
                 </Panel>
                 <Panel title="Export Report" defaultOpen={false}>
                     <PanelText>
-                        <a href="#">Download as PDF →</a><br /><a href="#">Download as CSV →</a>
+                        PDF and CSV export are coming soon. Your raw data can be exported today from{' '}
+                        <Link href="/settings/danger-zone" className="text-primary hover:underline">Settings → Export data</Link>.
                     </PanelText>
                 </Panel>
             </div>
