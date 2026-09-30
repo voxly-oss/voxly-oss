@@ -192,7 +192,7 @@ export default function OrganizationSettingsPage() {
                     <Panel title="Team" defaultOpen={false}>
                         <PanelText>
                             This workspace is single-user. Invitations, seats, and roles need a membership API before they can do anything —{' '}
-                            <Link href="/settings/team-members" className="text-primary">see the preview</Link>.
+                            <Link href="/settings/team-members" className="text-primary hover:underline">see what’s planned</Link>.
                         </PanelText>
                     </Panel>
                     <Panel title="Recent Activity" defaultOpen={false}>

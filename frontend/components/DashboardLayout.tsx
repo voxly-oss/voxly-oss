@@ -34,6 +34,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import VoxlyLogo from '@/components/VoxlyLogo';
 import CommandPalette from '@/components/CommandPalette';
 import NotificationBell from '@/components/NotificationBell';
+import { SoonTag } from '@/components/ComingSoon';
 
 // Hydration-safe platform check for the shortcut hint (⌘K vs Ctrl K).
 const noopSubscribe = () => () => {};
@@ -52,9 +53,10 @@ const navigation = [
     { name: 'Projects', href: '/projects', icon: FolderGit2 },
     { name: 'Conversations', href: '/messages', icon: MessageSquare },
     { name: 'Channels', href: '/channels', icon: Radio },
-    { name: 'AI Agents', href: '/agents', icon: Sparkles },
+    // `soon`: roadmap pages — kept in the IA, but tagged so they don't read as live.
+    { name: 'AI Agents', href: '/agents', icon: Sparkles, soon: true },
     { name: 'Analytics', href: '/analytics', icon: TrendingUp },
-    { name: 'Automations', href: '/automations', icon: Zap },
+    { name: 'Automations', href: '/automations', icon: Zap, soon: true },
     { name: 'Settings', href: '/settings/general', icon: Settings },
 ];
 
@@ -157,6 +159,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
 
                                     <item.icon className={cn('w-[17px] h-[17px] relative z-10 transition-colors', isActive ? 'text-primary' : 'text-muted-foreground group-hover:text-foreground')} />
                                     <span className="relative z-10">{item.name}</span>
+                                    {item.soon && <SoonTag className="relative z-10 ml-auto" />}
                                 </Link>
                             );
                         })}
