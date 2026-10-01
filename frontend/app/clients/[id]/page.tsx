@@ -44,6 +44,7 @@ import ConfirmDialog from '@/components/ConfirmDialog';
 import ProjectFormDialog from '@/components/ProjectFormDialog';
 import FollowUpDialog from '@/components/FollowUpDialog';
 import ClientFormDialog from '@/components/ClientFormDialog';
+import ClientChatLinkCard from '@/components/ClientChatLinkCard';
 
 function DetailTile({ icon: Icon, label, children }: { icon: React.ElementType; label: string; children: React.ReactNode }) {
     return (
@@ -260,6 +261,8 @@ export default function ClientDetailPage() {
                     </DetailTile>
                 </div>
             </div>
+
+            <ClientChatLinkCard client={client} />
 
             {/* Projects */}
             <div className="flex items-center justify-between">

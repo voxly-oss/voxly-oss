@@ -159,6 +159,48 @@ export interface InboxPage {
     conversations: InboxConversation[];
 }
 
+/* ─── Voxly chat link (the native channel) — backend/app/api/v1/portal.py ─── */
+
+/** GET/POST /api/v1/clients/{id}/chat-link — the agency's view of the link. */
+export interface ChatLink {
+    active: boolean;
+    url: string | null;
+    created_at: string | null;
+    last_opened_at: string | null;
+    /** Coarse, e.g. "Chrome on Android" — no IP or raw user agent is kept. */
+    last_opened_device: string | null;
+}
+
+export interface PortalProfile {
+    client_id: string;
+    client_name: string;
+    agency_name: string;
+}
+
+export interface PortalSession {
+    access_token: string;
+    token_type: string;
+    expires_in: number;
+    profile: PortalProfile;
+}
+
+/** A message as the client sees it: no teammate ids, models or errors. */
+export interface PortalMessage {
+    id: string;
+    /** inbound = written by the client */
+    direction: 'inbound' | 'outbound';
+    author_type: 'client' | 'ai' | 'agent';
+    channel: string;
+    body: string;
+    status: MessageStatus;
+    created_at: string | null;
+}
+
+export interface PortalMessagePage {
+    messages: PortalMessage[];
+    has_more: boolean;
+}
+
 /** GET /api/v1/conversations/{client_id} */
 export interface ConversationDetail {
     client_id: string;
