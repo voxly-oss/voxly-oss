@@ -23,6 +23,7 @@ from app.models.project import Project
 from app.models.milestone import Milestone
 from app.models.chat_history import ChatHistory
 from app.models.conversation_state import ConversationState
+from app.models.message import Message
 from app.services.ai_service import generate_client_response
 from app.services.cache_service import get_github_stats_cached
 from app.services.localization import detect_language, t
@@ -342,6 +343,7 @@ async def process_incoming_message(
     media_content_type: Optional[str] = None,
     media_auth: Optional[tuple] = None,
     reply_address: Optional[str] = None,
+    inbound: Optional[Message] = None,
 ) -> Optional[str]:
     """
     Core AI pipeline shared by WhatsApp and Telegram.
@@ -375,15 +377,17 @@ async def process_incoming_message(
         # project, whose messages used to vanish (_save_chat_history needs one).
         # Non-fatal: if `messages` isn't there yet (code deployed before the
         # migration), the AI must keep answering exactly as before.
-        inbound = None
-        try:
-            inbound = message_store.record_inbound(
-                db, client, channel, message, project=project, language=_detect_message_language(message),
-            )
-            await message_store.broadcast_message(client, inbound)
-        except Exception as exc:
-            db.rollback()
-            logger.error("[%s] Failed to record inbound message: %s", channel.upper(), exc)
+        # The Voxly chat portal records (and acknowledges) the message itself
+        # before handing over, so it arrives here already saved.
+        if inbound is None:
+            try:
+                inbound = message_store.record_inbound(
+                    db, client, channel, message, project=project, language=_detect_message_language(message),
+                )
+                await message_store.broadcast_message(client, inbound)
+            except Exception as exc:
+                db.rollback()
+                logger.error("[%s] Failed to record inbound message: %s", channel.upper(), exc)
 
         # A human owns this conversation (Take over / escalated): stay quiet.
         if message_store.ai_paused(db, client):
@@ -459,8 +463,20 @@ async def process_incoming_message(
             exc_info=True,
         )
         apology = t("pipeline_error", detect_language(message))
-        # The webhooks no longer send replies, so the apology goes out here.
-        if reply_address:
+        # Record the apology like any AI reply so it shows in the thread and
+        # reaches channels with no provider address (the Voxly chat link);
+        # fall back to a bare send if even recording fails.
+        delivered = False
+        try:
+            db.rollback()
+            outbound = message_store.record_outbound(db, client, channel, apology, author_type="ai", reply_to=inbound)
+            await message_store.broadcast_message(client, outbound)
+            await message_store.deliver(db, client, outbound, address=reply_address)
+            delivered = True
+        except Exception as exc:
+            db.rollback()
+            logger.error("[%s] Failed to record the apology: %s", channel.upper(), exc)
+        if not delivered and reply_address:
             await send_via(channel, reply_address, apology)
         return apology
     finally:

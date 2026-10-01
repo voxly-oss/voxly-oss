@@ -164,4 +164,19 @@ class ConnectionManager:
         return list(self.active_connections.keys())
 
 
+    async def close_all(self, user_id: str) -> None:
+        """Close every connection registered under this key (e.g. a revoked
+        client chat link must not keep receiving messages)."""
+        for connection in list(self.active_connections.get(user_id, [])):
+            self.disconnect(connection, user_id)
+            try:
+                await connection.close()
+            except Exception:
+                pass
+
+
 manager = ConnectionManager()
+
+# Client chat portal sockets, keyed by client id — a separate registry so a
+# client connection can never be reached by an agency broadcast, or vice versa.
+portal_manager = ConnectionManager()
