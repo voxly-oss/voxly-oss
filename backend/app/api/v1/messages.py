@@ -237,7 +237,7 @@ async def send_message(
     if channel is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"{client.name} has no WhatsApp number or Telegram chat ID to message",
+            detail=f"{client.name} has no WhatsApp number, Telegram chat ID or Voxly chat link to message",
         )
     adapter = get_adapter(channel)
     if adapter is None:

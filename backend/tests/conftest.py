@@ -1,3 +1,12 @@
+import os
+
+# Tests must never reach a real database. app.config also reads backend/.env,
+# whose DATABASE_URL is the real (production) one, and the app's own engine
+# is built from it the moment the app is imported. An environment variable
+# beats .env, so pin the test database first. An explicitly set DATABASE_URL
+# (e.g. a disposable Postgres for the Postgres lane) still wins.
+os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
@@ -8,11 +17,9 @@ from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 
 from app.main import app
+from app import database as app_database
 from app.database import Base, get_db
 from app.rate_limit import limiter
-
-
-import os
 
 
 @compiles(PG_UUID, "sqlite")
@@ -34,6 +41,11 @@ if "sqlite:///:memory:" in SQLALCHEMY_DATABASE_URL:
 
 engine = create_engine(SQLALCHEMY_DATABASE_URL, **engine_kwargs)
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+# Code that opens its own session instead of using get_db (WebSocket auth,
+# background tasks) holds the app's SessionLocal factory object; rebinding
+# that one object points all of it at the test database.
+app_database.SessionLocal.configure(bind=engine)
 
 
 if "sqlite" in SQLALCHEMY_DATABASE_URL:
