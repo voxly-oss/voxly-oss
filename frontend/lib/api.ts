@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { Client } from '@/types';
+import type { Client, ConversationDetail, InboxPage, MessagePage, ThreadMessage } from '@/types';
 
 const api = axios.create({
     baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000',
@@ -251,6 +251,23 @@ export const chatAPI = {
      *  Broadcasts conversation.state_changed to every connected dashboard. */
     setConversationStatus: (clientId: string, status: string) =>
         api.patch(`/api/v1/chat/conversations/${clientId}/status`, { status }),
+};
+
+// ─── Inbox: the per-message conversation store ───
+// Built on the `messages` table, so it carries teammate replies and delivery
+// status that the chat_history-based endpoints above can't represent.
+export const conversationsAPI = {
+    list: (params?: { search?: string; status?: string; skip?: number; limit?: number }) =>
+        api.get<InboxPage>('/api/v1/conversations', { params }),
+    get: (clientId: string) => api.get<ConversationDetail>(`/api/v1/conversations/${clientId}`),
+    /** Newest page first; pass `before` (a message id) to page back in time. */
+    messages: (clientId: string, params?: { before?: string; limit?: number }) =>
+        api.get<MessagePage>(`/api/v1/conversations/${clientId}/messages`, { params }),
+    /** A teammate replies. Resolves with status "failed" (not an error) when the provider rejects it. */
+    send: (clientId: string, data: { text: string; channel?: string }) =>
+        api.post<ThreadMessage>(`/api/v1/conversations/${clientId}/messages`, data),
+    retry: (clientId: string, messageId: string) =>
+        api.post<ThreadMessage>(`/api/v1/conversations/${clientId}/messages/${messageId}/retry`),
 };
 
 // ─── AI assistant (agency owner ↔ Voxly) ───

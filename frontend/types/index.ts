@@ -115,6 +115,63 @@ export interface ConversationsListResponse {
     conversations: ConversationSummary[];
 }
 
+/* ─── Inbox (per-message store) — backend/app/api/v1/messages.py ─── */
+
+export type MessageChannel = 'whatsapp' | 'telegram';
+export type MessageStatus = 'received' | 'queued' | 'sent' | 'failed';
+
+/** One message in a thread. `author_type` is who wrote it: the client, the AI, or a teammate. */
+export interface ThreadMessage {
+    id: string;
+    client_id: string;
+    project_id: string | null;
+    channel: MessageChannel | string;
+    direction: 'inbound' | 'outbound';
+    author_type: 'client' | 'ai' | 'agent';
+    author_user_id: string | null;
+    body: string;
+    status: MessageStatus;
+    error: string | null;
+    reply_to_id: string | null;
+    model_used: string | null;
+    created_at: string | null;
+}
+
+/** GET /api/v1/conversations/{client_id}/messages — oldest → newest within the page. */
+export interface MessagePage {
+    messages: ThreadMessage[];
+    has_more: boolean;
+}
+
+export interface InboxConversation {
+    client_id: string;
+    client_name: string;
+    channel: string;
+    last_message: ThreadMessage;
+    message_count: number;
+    status: ConversationStatus | null;
+    /** The client wrote last and nobody has answered yet. */
+    awaiting_reply: boolean;
+}
+
+export interface InboxPage {
+    total: number;
+    conversations: InboxConversation[];
+}
+
+/** GET /api/v1/conversations/{client_id} */
+export interface ConversationDetail {
+    client_id: string;
+    client_name: string;
+    status: ConversationStatus | null;
+    status_updated_at: string | null;
+    /** A teammate owns the conversation, so the AI won't auto-reply. */
+    ai_paused: boolean;
+    channels: string[];
+    default_channel: string | null;
+    github_stats: GitHubStats | null;
+}
+
 /** GET /api/v1/chat/history/{client_id} */
 export interface ChatHistoryResponse {
     client_id: string;
