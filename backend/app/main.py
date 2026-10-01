@@ -96,6 +96,8 @@ app.include_router(super_admin_router, prefix="/voxly-admin", include_in_schema=
 
 from app.api.v1.channels import router as channels_router
 app.include_router(channels_router, prefix="/api/v1/channels", tags=["Channels"])
+from app.api.v1.messages import router as messages_router
+app.include_router(messages_router, prefix="/api/v1/conversations", tags=["Conversations"])
 
 
 @app.get("/", tags=["Root"])
