@@ -132,7 +132,7 @@ class GeminiProvider(AIProvider):
             raise ValueError("Gemini provider requires 'google-genai' package. Install backend dependencies.")
         
         self.client = genai.Client(api_key=key)
-        self.model_name = 'gemini-2.5-flash'
+        self.model_name = settings.GEMINI_MODEL
         self.legacy_model = None
         try:
             model_cls = getattr(genai, "GenerativeModel", None)
@@ -147,7 +147,7 @@ class GeminiProvider(AIProvider):
 
     @property
     def default_model(self) -> str:
-        return "gemini-2.5-flash"
+        return settings.GEMINI_MODEL
 
     async def generate_response(
         self,
@@ -221,7 +221,7 @@ class GeminiProvider(AIProvider):
                 contents=contents,
                 config=types.GenerateContentConfig(
                     system_instruction=system_prompt,
-                    tools=gemini_tools,
+                    tools=gemini_tools or None,
                     max_output_tokens=max_tokens
                 )
             )

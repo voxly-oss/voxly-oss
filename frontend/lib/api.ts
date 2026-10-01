@@ -1,4 +1,5 @@
 import axios from 'axios';
+import type { Client } from '@/types';
 
 const api = axios.create({
     baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000',
@@ -20,15 +21,22 @@ api.interceptors.request.use((config) => {
     return config;
 });
 
+// Public pages that make credential requests. A 401 there is a wrong
+// password / expired link the page itself reports — hard-redirecting to
+// /login reloaded the page and wiped the error toast before it was seen.
+const PUBLIC_AUTH_PATHS = ['/login', '/register', '/forgot-password', '/reset-password', '/auth/'];
+
 // Handle 401 errors — redirect to login (except for super admin routes which handle it themselves)
 api.interceptors.response.use(
     (response) => response,
     (error) => {
         if (error.response?.status === 401) {
             if (typeof window !== 'undefined') {
+                const { pathname } = window.location;
                 // Don't auto-redirect from super admin — the page handles its own auth flow
-                const isSuperAdminRoute = window.location.pathname.startsWith('/voxly-admin');
-                if (!isSuperAdminRoute) {
+                const isSuperAdminRoute = pathname.startsWith('/voxly-admin');
+                const isPublicAuthRoute = PUBLIC_AUTH_PATHS.some((p) => pathname.startsWith(p));
+                if (!isSuperAdminRoute && !isPublicAuthRoute) {
                     localStorage.removeItem('access_token');
                     window.location.href = '/login';
                 }
@@ -37,6 +45,35 @@ api.interceptors.response.use(
         return Promise.reject(error);
     }
 );
+
+/**
+ * A human-readable message from an API error, safe to render.
+ *
+ * FastAPI returns `detail` as a string for HTTPException but as an ARRAY of
+ * `{loc, msg, type}` objects for 422 validation errors. Passing that array
+ * straight into a toast throws "Objects are not valid as a React child" and
+ * takes down the whole app (the Toaster lives in the root layout).
+ */
+export function getApiErrorMessage(err: unknown, fallback: string): string {
+    const response = (err as { response?: { status?: number; data?: { detail?: unknown } } })?.response;
+    if (response?.status === 429) return 'Too many requests — please wait a moment and try again.';
+    const detail = response?.data?.detail;
+    if (typeof detail === 'string' && detail.trim()) return detail;
+    if (Array.isArray(detail) && detail.length > 0) {
+        const first = detail[0] as { loc?: unknown[]; msg?: string };
+        if (typeof first?.msg === 'string') {
+            // "Value error, '+1234' is not a valid phone number" → drop the pydantic prefix.
+            const msg = first.msg.replace(/^Value error,\s*/i, '');
+            const field = Array.isArray(first.loc) ? first.loc[first.loc.length - 1] : undefined;
+            return typeof field === 'string' && field !== 'body'
+                ? `${field.replace(/_/g, ' ')}: ${msg}`
+                : msg;
+        }
+    }
+    if ((err as { code?: string })?.code === 'ECONNABORTED') return 'The server took too long to respond. Try again.';
+    if (!response && (err as { message?: string })?.message === 'Network Error') return 'Can’t reach the server. Check your connection and try again.';
+    return fallback;
+}
 
 // ─── Auth API ───
 export const authAPI = {
@@ -87,9 +124,25 @@ export const authAPI = {
 };
 
 // ─── Clients API ───
+const CLIENTS_PAGE_SIZE = 100; // backend MAX_LIST_LIMIT (api/v1/clients.py)
+
 export const clientsAPI = {
     list: (params?: { skip?: number; limit?: number }) =>
         api.get('/api/v1/clients', { params }),
+    /** Every client. The endpoint caps a page at 100, so a single list() call
+     *  silently dropped client #101 onwards from every page that used it. */
+    listAll: async (): Promise<Client[]> => {
+        const all: Client[] = [];
+        // Hard stop at 50 pages so a misbehaving API can't loop forever.
+        for (let page = 0; page < 50; page++) {
+            const res = await api.get<Client[]>('/api/v1/clients', {
+                params: { skip: page * CLIENTS_PAGE_SIZE, limit: CLIENTS_PAGE_SIZE },
+            });
+            all.push(...res.data);
+            if (res.data.length < CLIENTS_PAGE_SIZE) break;
+        }
+        return all;
+    },
     create: (data: {
         name: string;
         phone: string;
@@ -100,12 +153,13 @@ export const clientsAPI = {
     get: (id: string) => api.get(`/api/v1/clients/${id}`),
     update: (
         id: string,
+        // null clears a field (backend updates use exclude_unset); omit to keep it.
         data: {
             name?: string;
             phone?: string;
-            email?: string;
-            company?: string;
-            telegram_chat_id?: string;
+            email?: string | null;
+            company?: string | null;
+            telegram_chat_id?: string | null;
             is_active?: boolean;
         }
     ) => api.put(`/api/v1/clients/${id}`, data),
@@ -131,12 +185,12 @@ export const projectsAPI = {
         id: string,
         data: {
             name?: string;
-            description?: string;
-            github_repo?: string;
+            description?: string | null;
+            github_repo?: string | null;
             github_sync_enabled?: boolean;
             status?: string;
-            start_date?: string;
-            expected_end_date?: string;
+            start_date?: string | null;
+            expected_end_date?: string | null;
         }
     ) => api.put(`/api/v1/projects/${id}`, data),
     delete: (id: string) => api.delete(`/api/v1/projects/${id}`),
@@ -159,10 +213,10 @@ export const milestonesAPI = {
         id: string,
         data: {
             title?: string;
-            description?: string;
+            description?: string | null;
             status?: string;
             progress?: number;
-            due_date?: string;
+            due_date?: string | null;
         }
     ) => api.put(`/api/v1/milestones/${id}`, data),
     delete: (id: string) => api.delete(`/api/v1/milestones/${id}`),
@@ -197,6 +251,15 @@ export const chatAPI = {
      *  Broadcasts conversation.state_changed to every connected dashboard. */
     setConversationStatus: (clientId: string, status: string) =>
         api.patch(`/api/v1/chat/conversations/${clientId}/status`, { status }),
+};
+
+// ─── AI assistant (agency owner ↔ Voxly) ───
+// context: "general" or "project:<uuid>" — the backend loads that project's
+// status + synced GitHub stats into the system prompt.
+export const aiAPI = {
+    chat: (data: { message: string; context?: string }) =>
+        // Tool-using replies (GitHub lookups + LLM) routinely outlast the 30s default.
+        api.post<{ response: string; tools_used: string[] }>('/api/v1/ai/chat', data, { timeout: 90_000 }),
 };
 
 // ─── Channels API ───

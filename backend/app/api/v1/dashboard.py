@@ -320,12 +320,17 @@ def _build_integration_status(current_user: User) -> IntegrationStatus:
     """Check which integrations are configured for this user."""
     # WhatsApp: Twilio is platform-wide, but we check if the user has any WA-sourced messages
     # For now: use platform-level config as proxy
-    whatsapp_ready = bool(settings.TWILIO_ACCOUNT_SID and settings.TWILIO_AUTH_TOKEN)
+    if settings.WHATSAPP_PROVIDER == "waha":
+        whatsapp_ready = bool(settings.WAHA_URL)
+    else:
+        whatsapp_ready = bool(settings.TWILIO_ACCOUNT_SID and settings.TWILIO_AUTH_TOKEN)
     telegram_ready = bool(settings.TELEGRAM_BOT_TOKEN)
     github_ready = bool(settings.GITHUB_TOKEN)
 
     # AI provider: check what's configured
-    if settings.GEMINI_API_KEY:
+    if settings.GROQ_API_KEY:
+        ai_provider = "groq"
+    elif settings.GEMINI_API_KEY:
         ai_provider = "gemini"
     elif settings.OPENAI_API_KEY:
         ai_provider = "openai"

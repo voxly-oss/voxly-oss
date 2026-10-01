@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { authAPI } from '@/lib/api';
+import { authAPI, getApiErrorMessage } from '@/lib/api';
 import { Loader2, CheckCircle, XCircle } from 'lucide-react';
 
 function CallbackHandler() {
@@ -42,12 +42,8 @@ function CallbackHandler() {
                 setMessage('Signed in! Redirecting...');
                 setTimeout(() => router.push('/dashboard'), 800);
             } catch (err) {
-                const error = err as { response?: { data?: { detail?: string } } };
                 setStatus('error');
-                setMessage(
-                    error.response?.data?.detail ||
-                    'Authentication failed. Please try again.'
-                );
+                setMessage(getApiErrorMessage(err, 'Authentication failed. Please try again.'));
             }
         }
 

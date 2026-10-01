@@ -1,19 +1,21 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { Suspense, useState, useEffect, useCallback, useRef } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useToast } from '@/hooks/use-toast';
-import { chatAPI } from '@/lib/api';
+import { chatAPI, getApiErrorMessage } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import {
     MessageSquare, Search, User as UserIcon, ChevronLeft, ChevronRight,
-    Sparkles, Plus, AlertTriangle, Loader2, RefreshCw, Code2,
+    Sparkles, Plus, AlertTriangle, Loader2, RefreshCw, Code2, Send,
 } from 'lucide-react';
 import { Panel, PanelRow, PanelText } from '@/components/SidePanel';
 import { PreviewMark } from '@/components/PreviewBadge';
+import FollowUpDialog from '@/components/FollowUpDialog';
 import type {
     ChatHistoryResponse, ChatMessage, ConversationStatus,
     ConversationSummary, ConversationsListResponse,
@@ -117,11 +119,39 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
 
 /* ─── Page ─── */
 
+const STATUS_KEYS = Object.keys(STATUS_LABEL) as ConversationStatus[];
+
+// useSearchParams needs a Suspense boundary or `next build` fails the
+// static prerender of this route.
 export default function ConversationCenterPage() {
+    return (
+        <Suspense fallback={<div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>}>
+            <ConversationCenter />
+        </Suspense>
+    );
+}
+
+function ConversationCenter() {
+    // Deep links: /messages?client=<id> (from client, project and dashboard
+    // pages) opens that thread; /messages?status=awaiting_human pre-filters.
+    const searchParams = useSearchParams();
     const [search, setSearch] = useState('');
     const [page, setPage] = useState(0);
-    const [statusFilter, setStatusFilter] = useState<'all' | ConversationStatus>('all');
-    const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
+    const [statusFilter, setStatusFilter] = useState<'all' | ConversationStatus>(() => {
+        const s = searchParams.get('status');
+        return s && (STATUS_KEYS as string[]).includes(s) ? (s as ConversationStatus) : 'all';
+    });
+    const [selectedClientId, setSelectedClientId] = useState<string | null>(() => searchParams.get('client'));
+    const [composeOpen, setComposeOpen] = useState(false);
+    const [followUpOpen, setFollowUpOpen] = useState(false);
+    const threadRef = useRef<HTMLDivElement>(null);
+
+    // The thread renders below the list at every width — bring it into view
+    // when the user picks a conversation, instead of leaving them to scroll.
+    const selectConversation = (clientId: string) => {
+        setSelectedClientId(clientId);
+        requestAnimationFrame(() => threadRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+    };
 
     const debouncedSearch = useDebouncedValue(search, 300);
     const queryClient = useQueryClient();
@@ -153,9 +183,11 @@ export default function ConversationCenterPage() {
     const total = conversationsQuery.data?.total ?? 0;
     const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
-    const selected: ConversationSummary | null =
-        conversations.find(c => c.client_id === selectedClientId) ?? conversations[0] ?? null;
-    const selectedId = selected?.client_id ?? null;
+    // An explicit selection (click or ?client=) wins even when that client
+    // isn't on the current page of results — previously a deep link to a
+    // conversation on page 2 silently opened page 1's first thread instead.
+    const selectedId: string | null = selectedClientId ?? conversations[0]?.client_id ?? null;
+    const selected: ConversationSummary | null = conversations.find(c => c.client_id === selectedId) ?? null;
 
     /* ── Selected conversation thread ── */
 
@@ -215,11 +247,9 @@ export default function ConversationCenterPage() {
                 queryClient.setQueryData(['conversation-thread', variables.clientId], context.previousThread);
             }
             queryClient.invalidateQueries({ queryKey: ['conversations'] });
-            const detail =
-                (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
             toast({
                 title: 'Could not update status',
-                description: typeof detail === 'string' ? detail : 'Please try again.',
+                description: getApiErrorMessage(err, 'Please try again.'),
                 variant: 'destructive',
             });
         },
@@ -292,6 +322,13 @@ export default function ConversationCenterPage() {
     const selectedConfidence = formatConfidence(selected?.confidence ?? null);
     const isMutatingThis = statusMutation.isPending && statusMutation.variables?.clientId === selectedId;
 
+    // Header facts for the open thread: from the list row when it's on this
+    // page, otherwise from the thread response itself (deep link).
+    const selectedName = selected?.client_name ?? threadQuery.data?.client_name ?? null;
+    const selectedChannel = selected?.channel ?? thread[0]?.channel ?? null;
+    const selectedCount = selected?.message_count ?? threadQuery.data?.count ?? thread.length;
+    const selectedLastAt = selected?.last_message_at ?? thread[thread.length - 1]?.created_at ?? null;
+
     return (
         <div className="flex flex-col xl:flex-row gap-6 items-start">
             <div className="flex-1 min-w-0 w-full flex flex-col gap-[18px]">
@@ -306,9 +343,9 @@ export default function ConversationCenterPage() {
                             {isConnected && <span className="text-voxly-success"> · live</span>}
                         </p>
                     </div>
-                    <button disabled title="Compose requires selecting a client first" className="bg-primary/60 text-primary-foreground font-semibold text-[13px] rounded-lg px-4 py-[9px] flex items-center gap-[7px] cursor-not-allowed">
+                    <Button onClick={() => setComposeOpen(true)} className="font-semibold text-[13px] rounded-lg px-4 py-[9px] h-auto gap-[7px]">
                         <Plus className="w-[15px] h-[15px]" /> Compose
-                    </button>
+                    </Button>
                 </div>
 
                 {needsAttention.length > 0 && (
@@ -319,7 +356,7 @@ export default function ConversationCenterPage() {
                                 <div key={c.client_id} className="flex items-center gap-2.5">
                                     <AlertTriangle className="w-3.5 h-3.5 text-voxly-warning flex-none" />
                                     <span className="flex-1 text-[12.5px] text-foreground/90 leading-relaxed">{c.client_name} — awaiting a human reply</span>
-                                    <button onClick={() => setSelectedClientId(c.client_id)} className="font-semibold text-[11px] text-voxly-warning border border-voxly-warning/40 hover:bg-voxly-warning-soft rounded-md px-2.5 py-[3px] flex-none transition-colors">
+                                    <button onClick={() => selectConversation(c.client_id)} className="font-semibold text-[11px] text-voxly-warning border border-voxly-warning/40 hover:bg-voxly-warning-soft rounded-md px-2.5 py-[3px] flex-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                                         Review
                                     </button>
                                 </div>
@@ -371,7 +408,8 @@ export default function ConversationCenterPage() {
                         <button
                             key={f.key}
                             onClick={() => handleFilterChange(f.key)}
-                            className={`text-[11.5px] rounded-full px-[11px] py-[5px] transition-colors ${
+                            aria-pressed={statusFilter === f.key}
+                            className={`text-[11.5px] rounded-full px-[11px] py-[5px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
                                 statusFilter === f.key ? 'font-semibold text-primary-foreground bg-primary' : 'text-voxly-ink-6 border border-border hover:border-voxly-ink-4 hover:text-foreground'
                             }`}>
                             {f.label}
@@ -383,10 +421,7 @@ export default function ConversationCenterPage() {
                 <div className="border border-border rounded-[14px] bg-card overflow-hidden">
                     {conversationsQuery.isError ? (
                         <ErrorState
-                            message={
-                                (conversationsQuery.error as { response?: { data?: { detail?: string } } })
-                                    ?.response?.data?.detail ?? 'The conversations service did not respond.'
-                            }
+                            message={getApiErrorMessage(conversationsQuery.error, 'The conversations service did not respond.')}
                             onRetry={() => conversationsQuery.refetch()}
                         />
                     ) : conversationsQuery.isPending ? (
@@ -409,7 +444,7 @@ export default function ConversationCenterPage() {
                                     Clear filters
                                 </Button>
                             ) : (
-                                <Link href="/clients/new">
+                                <Link href="/clients?new=1">
                                     <Button className="bg-primary hover:bg-primary/90 text-primary-foreground">
                                         <UserIcon className="w-4 h-4 mr-2" />Add a Client
                                     </Button>
@@ -425,8 +460,9 @@ export default function ConversationCenterPage() {
                                     return (
                                         <button
                                             key={c.client_id}
-                                            onClick={() => setSelectedClientId(c.client_id)}
-                                            className={`w-full flex items-center gap-3 px-4 py-[11px] border-b border-border last:border-b-0 text-left transition-colors ${
+                                            onClick={() => selectConversation(c.client_id)}
+                                            aria-current={isSelected ? 'true' : undefined}
+                                            className={`w-full flex items-center gap-3 px-4 py-[11px] border-b border-border last:border-b-0 text-left transition-colors focus-visible:outline-none focus-visible:bg-voxly-surface-2 ${
                                                 isSelected ? 'bg-voxly-surface-2' : 'hover:bg-white/[0.02]'
                                             }`}
                                         >
@@ -461,10 +497,10 @@ export default function ConversationCenterPage() {
                             {conversationsQuery.isFetching && ' · updating…'}
                         </span>
                         <div className="flex gap-1.5">
-                            <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0} className="w-7 h-7 border border-border rounded-[7px] flex items-center justify-center text-voxly-ink-6 disabled:opacity-40 disabled:cursor-not-allowed hover:border-voxly-ink-4 transition-colors">
+                            <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0} aria-label="Previous page" className="w-7 h-7 border border-border rounded-[7px] flex items-center justify-center text-voxly-ink-6 disabled:opacity-40 disabled:cursor-not-allowed hover:border-voxly-ink-4 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                                 <ChevronLeft className="w-3.5 h-3.5" />
                             </button>
-                            <button onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1} className="w-7 h-7 border border-border rounded-[7px] flex items-center justify-center text-voxly-ink-6 disabled:opacity-40 disabled:cursor-not-allowed hover:border-voxly-ink-4 transition-colors">
+                            <button onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1} aria-label="Next page" className="w-7 h-7 border border-border rounded-[7px] flex items-center justify-center text-voxly-ink-6 disabled:opacity-40 disabled:cursor-not-allowed hover:border-voxly-ink-4 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                                 <ChevronRight className="w-3.5 h-3.5" />
                             </button>
                         </div>
@@ -472,9 +508,9 @@ export default function ConversationCenterPage() {
                 )}
 
                 {/* Selected conversation */}
-                {selected && (
+                {selectedId && (
                     <>
-                        <div className="flex items-center gap-2.5 pt-2 border-t border-border">
+                        <div ref={threadRef} className="flex items-center gap-2.5 pt-2 border-t border-border scroll-mt-20">
                             <span className="font-mono text-[9.5px] font-bold uppercase tracking-wider text-voxly-ink-5">Selected conversation</span>
                         </div>
                         <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -484,38 +520,43 @@ export default function ConversationCenterPage() {
                                 </div>
                                 <div className="min-w-0">
                                     <div className="flex items-center gap-2.5">
-                                        <Link href={`/clients/${selected.client_id}`} className="font-display font-bold text-[22px] text-foreground tracking-[-0.01em] truncate hover:text-primary transition-colors">
-                                            {selected.client_name}
+                                        <Link href={`/clients/${selectedId}`} className="font-display font-bold text-[22px] text-foreground tracking-[-0.01em] truncate hover:text-primary transition-colors">
+                                            {selectedName ?? (threadQuery.isPending ? 'Loading…' : 'Conversation')}
                                         </Link>
                                         <StatusChip status={liveStatus} />
                                     </div>
                                     <div className="text-[12.5px] text-voxly-ink-6 mt-1 capitalize">
-                                        {selected.channel} · {selected.message_count} message{selected.message_count === 1 ? '' : 's'}
+                                        {selectedChannel ? `${selectedChannel} · ` : ''}{selectedCount} message{selectedCount === 1 ? '' : 's'}
                                         {selectedConfidence != null && <span className="normal-case"> · confidence {selectedConfidence}%</span>}
-                                        {selected.sentiment && <span className="normal-case"> · sentiment {selected.sentiment}</span>}
+                                        {selected?.sentiment && <span className="normal-case"> · sentiment {selected.sentiment}</span>}
                                     </div>
                                 </div>
                             </div>
-                            <div className="flex items-center gap-2 flex-none">
-                                <button
-                                    onClick={() => statusMutation.mutate({ clientId: selected.client_id, status: 'escalated' })}
+                            <div className="flex items-center gap-2 flex-wrap">
+                                <Button variant="outline" onClick={() => setFollowUpOpen(true)} className="font-semibold text-[13px] h-auto px-3.5 py-2 gap-1.5">
+                                    <Send className="w-3.5 h-3.5" /> Send follow-up
+                                </Button>
+                                <Button
+                                    variant="outline"
+                                    onClick={() => statusMutation.mutate({ clientId: selectedId, status: 'escalated' })}
                                     disabled={isMutatingThis || liveStatus === 'escalated'}
-                                    className="font-semibold text-[13px] text-voxly-ink-6 hover:text-foreground border border-border hover:border-voxly-ink-4 rounded-lg px-3.5 py-2 transition-colors whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed">
+                                    className="font-semibold text-[13px] h-auto px-3.5 py-2 text-voxly-ink-6 hover:text-foreground">
                                     Escalate
-                                </button>
-                                <button
-                                    onClick={() => statusMutation.mutate({ clientId: selected.client_id, status: 'awaiting_human' })}
+                                </Button>
+                                <Button
+                                    variant="outline"
+                                    onClick={() => statusMutation.mutate({ clientId: selectedId, status: 'awaiting_human' })}
                                     disabled={isMutatingThis || liveStatus === 'awaiting_human'}
-                                    className="font-semibold text-[13px] text-voxly-ink-6 hover:text-foreground border border-border hover:border-voxly-ink-4 rounded-lg px-3.5 py-2 transition-colors whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed">
+                                    className="font-semibold text-[13px] h-auto px-3.5 py-2 text-voxly-ink-6 hover:text-foreground">
                                     Take over
-                                </button>
-                                <button
-                                    onClick={() => statusMutation.mutate({ clientId: selected.client_id, status: 'resolved' })}
+                                </Button>
+                                <Button
+                                    onClick={() => statusMutation.mutate({ clientId: selectedId, status: 'resolved' })}
                                     disabled={isMutatingThis || liveStatus === 'resolved'}
-                                    className="font-semibold text-[13px] bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg px-3.5 py-2 transition-colors whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2">
+                                    className="font-semibold text-[13px] h-auto px-3.5 py-2 gap-2">
                                     {isMutatingThis && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                                     Mark resolved
-                                </button>
+                                </Button>
                             </div>
                         </div>
 
@@ -580,13 +621,13 @@ export default function ConversationCenterPage() {
             </div>
 
             {/* Right column */}
-            {selected && (
+            {selectedId && (
                 <div className="w-full xl:w-80 flex-none flex flex-col gap-3.5">
                     <Panel title="Conversation Detail">
                         <PanelRow label="Status" value={liveStatus ? STATUS_LABEL[liveStatus] : 'No status yet'} />
-                        <PanelRow label="Channel" value={<span className="capitalize">{selected.channel}</span>} />
-                        <PanelRow label="Messages" value={selected.message_count} />
-                        <PanelRow label="Last activity" value={`${formatTimeAgo(selected.last_message_at)} ago`} />
+                        <PanelRow label="Channel" value={<span className="capitalize">{selectedChannel ?? '—'}</span>} />
+                        <PanelRow label="Messages" value={selectedCount} />
+                        <PanelRow label="Last activity" value={selectedLastAt ? `${formatTimeAgo(selectedLastAt)} ago` : '—'} />
                         {threadQuery.data?.status_updated_at && (
                             <PanelRow label="Status changed" value={`${formatTimeAgo(threadQuery.data.status_updated_at)} ago`} />
                         )}
@@ -618,7 +659,7 @@ export default function ConversationCenterPage() {
                         />
                         <PanelRow
                             label={<span className="flex items-center">Sentiment<PreviewMark /></span>}
-                            value={selected.sentiment ?? '—'}
+                            value={selected?.sentiment ?? '—'}
                         />
                         <PanelText>
                             These columns are stored per message, but no scoring or sentiment model runs in the pipeline yet — so they read as empty rather than guessed.
@@ -627,12 +668,19 @@ export default function ConversationCenterPage() {
 
                     <Panel title="Linked Client" defaultOpen={false}>
                         <PanelRow
-                            label={selected.client_name}
-                            value={<Link href={`/clients/${selected.client_id}`} className="text-primary">View →</Link>}
+                            label={selectedName ?? 'Client'}
+                            value={<Link href={`/clients/${selectedId}`} className="text-primary hover:underline">View →</Link>}
                         />
                     </Panel>
                 </div>
             )}
+
+            <FollowUpDialog open={composeOpen} onOpenChange={setComposeOpen} />
+            <FollowUpDialog
+                open={followUpOpen}
+                onOpenChange={setFollowUpOpen}
+                client={selectedId ? { id: selectedId, name: selectedName ?? 'this client' } : null}
+            />
         </div>
     );
 }

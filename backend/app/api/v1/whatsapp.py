@@ -5,13 +5,18 @@ Refactored to use the shared messaging_core pipeline.
 All business logic (AI, history, broadcast) is in messaging_core.py.
 """
 from fastapi import APIRouter, Request, BackgroundTasks, HTTPException
-from app.services.whatsapp_service import send_whatsapp_message
+from app.services.whatsapp_service import (
+    resolve_waha_lid,
+    send_whatsapp_message,
+    waha_chat_id_to_phone,
+)
 from app.services.messaging_core import find_client_by_phone, process_incoming_message
 from app.services.localization import detect_language, t
 from app.database import SessionLocal
 from app.config import settings
 from twilio.request_validator import RequestValidator
 import logging
+import secrets
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -132,13 +137,11 @@ async def _process_whatsapp_message(
             media_url=media_url,
             media_content_type=media_content_type,
             media_auth=media_auth,
+            reply_address=phone,
         )
-
-        success = await send_whatsapp_message(to_number=phone, message=reply)
-        if success:
-            logger.info(f"Reply sent for message {message_sid}")
-        else:
-            logger.error(f"Failed to send reply for message {message_sid}")
+        # The pipeline sends (and records the delivery status of) the reply.
+        if reply is None:
+            logger.info(f"AI paused (human owns the conversation) for message {message_sid}")
 
     except Exception as e:
         logger.error(f"Unexpected error processing WhatsApp message: {e}", exc_info=True)
@@ -151,6 +154,50 @@ async def _process_whatsapp_message(
             pass
     finally:
         db.close()
+
+
+@router.post(
+    "/waha-webhook",
+    responses={
+        401: {"description": "Missing or invalid webhook token"},
+        503: {"description": "WAHA webhook is not configured"},
+    },
+)
+async def waha_webhook(*, request: Request, background_tasks: BackgroundTasks):
+    """
+    Receive incoming WhatsApp messages from a self-hosted WAHA gateway.
+
+    WAHA posts {"event": "message", "session": ..., "payload": {"from": "<digits>@c.us",
+    "body": ..., "fromMe": bool, "id": ...}} and is configured to send our shared secret
+    in the X-Voxly-Webhook-Token header. Text only for now: media is ignored.
+    """
+    if not settings.WAHA_WEBHOOK_SECRET:
+        raise HTTPException(status_code=503, detail="WAHA webhook is not configured")
+    token = request.headers.get("X-Voxly-Webhook-Token", "")
+    if not secrets.compare_digest(token, settings.WAHA_WEBHOOK_SECRET):
+        raise HTTPException(status_code=401, detail="Invalid webhook token")
+
+    try:
+        event = await request.json()
+    except ValueError:
+        return {"status": "ignored", "reason": "invalid_json"}
+
+    payload = event.get("payload") or {}
+    if event.get("event") != "message" or payload.get("fromMe"):
+        return {"status": "ignored", "reason": "not_an_inbound_message"}
+
+    # Groups and status broadcasts have no phone number to match. WhatsApp's privacy ids
+    # (@lid) are resolved to a phone through WAHA.
+    sender = payload.get("from", "")
+    phone = waha_chat_id_to_phone(sender)
+    if not phone and sender.endswith("@lid"):
+        phone = await resolve_waha_lid(sender)
+    body = (payload.get("body") or "").strip()
+    if not phone or not body:
+        return {"status": "ignored", "reason": "unsupported_or_empty"}
+
+    background_tasks.add_task(_process_whatsapp_message, phone, body, payload.get("id", ""))
+    return {"status": "processing"}
 
 
 @router.get("/webhook")

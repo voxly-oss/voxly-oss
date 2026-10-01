@@ -38,12 +38,40 @@ Response format guidelines:
 - Use emojis sparingly and appropriately (✅ 🔄 ⏳ 🚀)
 - Structure: Overview → Details → Next steps
 - Keep responses under 200 words
+- This is a chat message, not a document: no tables, no headings, no **double-asterisk** bold;
+  use short paragraphs and simple "-" bullet lists
+- Never invent numbers. If GitHub data is marked unavailable, say you'll share live repository
+  numbers once they're back, and base the update on milestones instead
 - End with an open question (e.g., "Anything specific you want to know?")
 
 Language matching:
 - If question is in Hindi/Hinglish, respond in Hindi/Hinglish
 - If question is in English, respond in English
 - Use natural, conversational tone"""
+
+
+def _github_section(github_stats: Dict) -> str:
+    # A project with no repo comes back as {}, and a failed fetch as zeros plus an "error" key.
+    # Presenting either as real numbers made the assistant tell clients their project had
+    # "no activity, 0% progress". The raw error text stays out of the prompt: the model could
+    # echo it to the client.
+    if not github_stats:
+        return (
+            "GitHub Statistics: this project has no code repository linked. Base the update on\n"
+            "the milestones only, and do not mention GitHub, commits or repository data."
+        )
+    if github_stats.get("error"):
+        return (
+            "GitHub Statistics: UNAVAILABLE right now. Do not state any commit, issue or progress\n"
+            "numbers, and do not say the project has no activity."
+        )
+    return f"""GitHub Statistics (Last 7 days):
+- Total commits: {github_stats.get('commits_last_7_days', 0)}
+- Open issues: {github_stats.get('open_issues', 0)}
+- Closed issues: {github_stats.get('closed_issues', 0)}
+- Overall progress: {github_stats.get('progress_percent', 0)}%
+- Last commit: {github_stats.get('last_commit_message') or 'No recent activity'}
+- Last updated: {github_stats.get('last_commit_date') or 'Unknown'}"""
 
 
 def build_context(
@@ -54,24 +82,18 @@ def build_context(
     client_question: str,
 ) -> str:
     """Build context string for the AI provider. Same format for all providers."""
-    
+
     milestone_text = "\n".join([
         f"- {m['title']}: {m['status']} ({m['progress']}% complete)"
         for m in milestones
     ]) if milestones else "No milestones defined yet"
-    
+
     return f"""
 Client Information:
 - Name: {client_name}
 - Project: {project_name}
 
-GitHub Statistics (Last 7 days):
-- Total commits: {github_stats.get('commits_last_7_days', 0)}
-- Open issues: {github_stats.get('open_issues', 0)}
-- Closed issues: {github_stats.get('closed_issues', 0)}
-- Overall progress: {github_stats.get('progress_percent', 0)}%
-- Last commit: {github_stats.get('last_commit_message', 'No recent activity')}
-- Last updated: {github_stats.get('last_commit_date', 'Unknown')}
+{_github_section(github_stats)}
 
 Project Milestones:
 {milestone_text}

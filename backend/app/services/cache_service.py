@@ -147,6 +147,10 @@ async def _cache_delete(key: str) -> None:
     _mem_delete(key)
 
 
+_GITHUB_STATS_TTL = 3600
+_GITHUB_ERROR_TTL = 60
+
+
 async def get_github_stats_cached(project_id: str, repo_name: str) -> Dict:
     """
     Get GitHub stats with 1-hour cache.
@@ -168,7 +172,10 @@ async def get_github_stats_cached(project_id: str, repo_name: str) -> Dict:
     from app.services.github_service import fetch_github_stats
     stats = await fetch_github_stats(repo_name)
 
-    await _cache_set(cache_key, stats, 3600)
+    # A failed fetch is cached only briefly, so fixing the token (or GitHub recovering) shows up
+    # within a minute instead of an hour.
+    ttl = _GITHUB_ERROR_TTL if stats.get("error") else _GITHUB_STATS_TTL
+    await _cache_set(cache_key, stats, ttl)
     return stats
 
 

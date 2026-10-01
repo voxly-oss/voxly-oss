@@ -5,7 +5,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { authAPI } from '@/lib/api';
+import { authAPI, getApiErrorMessage } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -83,11 +83,11 @@ function ResetPasswordForm() {
       setTimeout(() => {
         router.push('/login');
       }, 3000);
-    } catch (error: any) {
+    } catch (error) {
       toast({
         variant: 'destructive',
         title: 'Reset failed',
-        description: error.response?.data?.detail || 'Something went wrong. The link may have expired.',
+        description: getApiErrorMessage(error, 'Something went wrong. The link may have expired.'),
       });
     } finally {
       setIsLoading(false);

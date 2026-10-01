@@ -21,15 +21,15 @@ def _register_and_login(client: TestClient, email: str) -> dict:
 
 
 def test_list_providers_only_returns_implemented(client: TestClient):
-    """GET /providers must only surface claude, openai, gemini — not the 5 stubs."""
+    """GET /providers must only surface claude, openai, gemini, groq — not the 4 stubs."""
     headers = _register_and_login(client, "providers@example.com")
 
     response = client.get("/api/v1/ai-keys/providers", headers=headers)
     assert response.status_code == 200
 
     provider_ids = {p["id"] for p in response.json()}
-    assert provider_ids == {"claude", "openai", "gemini"}
-    for hidden in ("deepseek", "groq", "perplexity", "mistral", "xai"):
+    assert provider_ids == {"claude", "openai", "gemini", "groq"}
+    for hidden in ("deepseek", "perplexity", "mistral", "xai"):
         assert hidden not in provider_ids
 
 

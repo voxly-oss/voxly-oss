@@ -1,24 +1,32 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { projectsAPI, clientsAPI, channelsAPI } from '@/lib/api';
+import { Suspense, useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { projectsAPI, channelsAPI, getApiErrorMessage } from '@/lib/api';
+import { clientsQuery } from '@/lib/queries';
 import { Button } from '@/components/ui/button';
 import {
     DropdownMenu,
     DropdownMenuCheckboxItem,
     DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
     FolderGit2, Loader2, MoreVertical, Plus, Search, Filter,
     AlertTriangle, Clock, ChevronLeft, ChevronRight, Code2, GitCommit,
+    Pencil, Trash2, ArrowUpRight, Users,
 } from 'lucide-react';
 import Link from 'next/link';
 import { getInitials } from '@/lib/utils';
-import type { Project, Client, ChannelActivity } from '@/types';
+import type { Project, ChannelActivity } from '@/types';
 import { motion, AnimatePresence } from 'framer-motion';
 import EmptyState from '@/components/EmptyState';
+import ProjectFormDialog from '@/components/ProjectFormDialog';
+import ConfirmDialog from '@/components/ConfirmDialog';
+import { useToast } from '@/hooks/use-toast';
 
 const PAGE_SIZE = 7;
 const STATUS_FILTERS = ['All', 'Active', 'Paused', 'Completed', 'Cancelled'] as const;
@@ -60,11 +68,48 @@ function Panel({ title, badge, defaultOpen = true, children }: { title: string; 
 
 const GRID_COLS = 'grid grid-cols-[2fr_1.2fr_1.2fr_1.2fr_1.1fr_0.85fr_28px]';
 
+// useSearchParams (/projects?new=1, from the dashboard setup checklist) needs a
+// Suspense boundary or `next build` fails the static prerender of this route.
 export default function ProjectsListPage() {
+    return (
+        <Suspense fallback={<div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>}>
+            <ProjectsList />
+        </Suspense>
+    );
+}
+
+function ProjectsList() {
     const [searchQuery, setSearchQuery] = useState('');
     const [statusFilter, setStatusFilter] = useState<typeof STATUS_FILTERS[number]>('All');
     const [channelFilter, setChannelFilter] = useState<Set<string>>(new Set());
     const [page, setPage] = useState(1);
+    const [projectDialogOpen, setProjectDialogOpen] = useState(false);
+    // /projects?new=1 opens the create dialog; closing strips the param with
+    // history.replaceState (router.replace doesn't commit here in production).
+    const searchParams = useSearchParams();
+    const wantsCreate = searchParams.get('new') === '1';
+    const [editingProject, setEditingProject] = useState<Project | null>(null);
+    const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
+    const { toast } = useToast();
+    const queryClient = useQueryClient();
+
+    const deleteMutation = useMutation({
+        mutationFn: (id: string) => projectsAPI.delete(id),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['projects'] });
+            queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });
+            toast({ title: 'Project deleted', description: projectToDelete?.name });
+            setProjectToDelete(null);
+        },
+        onError: (err) => {
+            toast({ variant: 'destructive', title: 'Couldn’t delete project', description: getApiErrorMessage(err, 'Please try again.') });
+        },
+    });
+
+    const openCreate = () => {
+        setEditingProject(null);
+        setProjectDialogOpen(true);
+    };
 
     const { data: projects = [], isLoading: projectsLoading } = useQuery({
         queryKey: ['projects'],
@@ -72,8 +117,7 @@ export default function ProjectsListPage() {
     });
 
     const { data: clients = [] } = useQuery({
-        queryKey: ['clients'],
-        queryFn: async () => (await clientsAPI.list()).data as Client[],
+        ...clientsQuery,
     });
 
     // Real per-client conversation channels, so "WhatsApp" on a row means
@@ -157,11 +201,9 @@ export default function ProjectsListPage() {
                             {totalCount} across {clients.length} {clients.length === 1 ? 'client' : 'clients'}
                         </p>
                     </div>
-                    <Link href="/clients">
-                        <Button className="bg-primary hover:bg-primary/90 text-primary-foreground font-semibold text-[13px] rounded-lg px-4 py-[9px] h-auto gap-[7px]">
-                            <Plus className="w-[15px] h-[15px]" /> New project
-                        </Button>
-                    </Link>
+                    <Button onClick={openCreate} className="font-semibold text-[13px] rounded-lg px-4 py-[9px] h-auto gap-[7px]">
+                        <Plus className="w-[15px] h-[15px]" /> New project
+                    </Button>
                 </div>
 
                 {!projectsLoading && totalCount > 0 && (
@@ -327,7 +369,35 @@ export default function ProjectsListPage() {
                                             ) : (
                                                 <div className="text-[12px] text-voxly-ink-5 whitespace-nowrap">{shortDate(project.expected_end_date)}</div>
                                             )}
-                                            <MoreVertical className="w-4 h-4 text-voxly-ink-5 group-hover:text-foreground cursor-pointer transition-colors" />
+                                            <DropdownMenu>
+                                                <DropdownMenuTrigger asChild>
+                                                    <Button variant="ghost" size="icon" className="w-7 h-7 text-voxly-ink-5 hover:text-foreground" aria-label={`Actions for ${project.name}`}>
+                                                        <MoreVertical className="w-4 h-4" />
+                                                    </Button>
+                                                </DropdownMenuTrigger>
+                                                <DropdownMenuContent align="end">
+                                                    <DropdownMenuItem asChild>
+                                                        <Link href={`/clients/${project.client_id}/projects/${project.id}/milestones`}>
+                                                            <ArrowUpRight className="w-4 h-4 mr-2" /> Open project
+                                                        </Link>
+                                                    </DropdownMenuItem>
+                                                    <DropdownMenuItem asChild>
+                                                        <Link href={`/clients/${project.client_id}`}>
+                                                            <Users className="w-4 h-4 mr-2" /> View client
+                                                        </Link>
+                                                    </DropdownMenuItem>
+                                                    <DropdownMenuItem onSelect={() => { setEditingProject(project); setProjectDialogOpen(true); }}>
+                                                        <Pencil className="w-4 h-4 mr-2" /> Edit project
+                                                    </DropdownMenuItem>
+                                                    <DropdownMenuSeparator />
+                                                    <DropdownMenuItem
+                                                        className="text-voxly-heat focus:bg-voxly-heat-soft focus:text-voxly-heat"
+                                                        onSelect={() => setProjectToDelete(project)}
+                                                    >
+                                                        <Trash2 className="w-4 h-4 mr-2" /> Delete project
+                                                    </DropdownMenuItem>
+                                                </DropdownMenuContent>
+                                            </DropdownMenu>
                                         </motion.div>
                                     );
                                 })}
@@ -447,6 +517,26 @@ export default function ProjectsListPage() {
                     </div>
                 </Panel>
             </div>
+
+            <ProjectFormDialog
+                open={projectDialogOpen || wantsCreate}
+                onOpenChange={(open) => {
+                    setProjectDialogOpen(open);
+                    if (!open && wantsCreate) window.history.replaceState(null, '', '/projects');
+                    if (!open) setEditingProject(null);
+                }}
+                project={editingProject}
+            />
+
+            <ConfirmDialog
+                open={!!projectToDelete}
+                onOpenChange={(open) => { if (!open) setProjectToDelete(null); }}
+                title="Delete project?"
+                description={<>&ldquo;{projectToDelete?.name}&rdquo; and all of its milestones will be deleted. This can&rsquo;t be undone.</>}
+                confirmLabel="Delete project"
+                pending={deleteMutation.isPending}
+                onConfirm={() => projectToDelete && deleteMutation.mutate(projectToDelete.id)}
+            />
         </div>
     );
 }

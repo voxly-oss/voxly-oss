@@ -3,14 +3,15 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
+import { SoonTag } from '@/components/ComingSoon';
 
-const NAV_GROUPS: { label: string; items: { name: string; href: string }[] }[] = [
+const NAV_GROUPS: { label: string; items: { name: string; href: string; soon?: boolean }[] }[] = [
     {
         label: 'Workspace',
         items: [
             { name: 'Organization', href: '/settings/organization' },
-            { name: 'Team Members', href: '/settings/team-members' },
-            { name: 'Roles & Permissions', href: '/settings/roles' },
+            { name: 'Team Members', href: '/settings/team-members', soon: true },
+            { name: 'Roles & Permissions', href: '/settings/roles', soon: true },
         ],
     },
     {
@@ -62,14 +63,16 @@ export default function SettingsShell({
                                     <Link
                                         key={item.href}
                                         href={item.href}
+                                        aria-current={isActive ? 'page' : undefined}
                                         className={cn(
-                                            'block px-2.5 py-[6px] rounded-[7px] text-[13px] mb-px transition-colors',
+                                            'flex items-center gap-2 px-2.5 py-[6px] rounded-[7px] text-[13px] mb-px transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                                             isActive
                                                 ? 'bg-secondary text-foreground font-semibold'
                                                 : 'text-voxly-ink-6 hover:bg-secondary/60 hover:text-foreground'
                                         )}
                                     >
                                         {item.name}
+                                        {item.soon && <SoonTag className="ml-auto" />}
                                     </Link>
                                 );
                             })}

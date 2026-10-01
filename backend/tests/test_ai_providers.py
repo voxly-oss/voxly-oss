@@ -65,3 +65,14 @@ async def test_gemini_provider():
         assert result.provider.lower() == "gemini"
         assert result.tokens_used == 40
         assert result.response == "Gemini Hello"
+
+
+@pytest.mark.asyncio
+async def test_groq_provider_uses_groq_endpoint_and_model():
+    from app.services.ai_providers.groq_provider import GroqProvider
+    with patch("app.services.ai_providers.openai_provider.AsyncOpenAI") as MockClient:
+        provider = GroqProvider(api_key="gsk_test")
+        kwargs = MockClient.call_args.kwargs
+        assert kwargs["base_url"] == "https://api.groq.com/openai/v1"
+        assert provider.default_model == "openai/gpt-oss-120b"
+        assert provider.provider_name == "Groq"

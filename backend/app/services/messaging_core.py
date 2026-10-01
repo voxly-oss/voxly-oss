@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import SessionLocal
 from app.models.client import Client
+from app.models.user import User
 from app.models.project import Project
 from app.models.milestone import Milestone
 from app.models.chat_history import ChatHistory
@@ -27,20 +28,50 @@ from app.services.cache_service import get_github_stats_cached
 from app.services.localization import detect_language, t
 from app.services.transcription_service import transcribe_audio
 from app.websockets.manager import manager, build_event
+from app.services import message_store
+from app.services.channels import send_via
 
 logger = logging.getLogger(__name__)
 
 
 # ── Client lookup ──────────────────────────────────────────────────────────────
 
+def _unique_active_client(db: Session, column, value: str, channel: str) -> Optional[Client]:
+    """The one live client an inbound sender maps to, or None.
+
+    Inbound messages carry only the sender's identity, not which agency (tenant)
+    they meant. Phone numbers are unique per agency, not globally, so the same
+    person can legitimately be a client of two agencies. If more than one live
+    client matches, guessing would answer with (and expose) another agency's
+    project data, so we refuse instead. Deleted/inactive clients and clients of a
+    deactivated agency never match.
+    """
+    matches = (
+        db.query(Client)
+        .join(User, Client.user_id == User.id)
+        .filter(
+            column == value,
+            Client.deleted_at.is_(None),
+            Client.is_active.isnot(False),
+            User.is_active.isnot(False),
+        )
+        .limit(2)
+        .all()
+    )
+    if len(matches) > 1:
+        logger.warning("[%s] Ambiguous sender matches several agencies' clients; not routing", channel)
+        return None
+    return matches[0] if matches else None
+
+
 def find_client_by_phone(db: Session, phone: str) -> Optional[Client]:
     """Look up client by phone number (WhatsApp identifier)."""
-    return db.query(Client).filter(Client.phone == phone).first()
+    return _unique_active_client(db, Client.phone, phone, "whatsapp")
 
 
 def find_client_by_telegram(db: Session, chat_id: str) -> Optional[Client]:
     """Look up client by Telegram chat ID."""
-    return db.query(Client).filter(Client.telegram_chat_id == str(chat_id)).first()
+    return _unique_active_client(db, Client.telegram_chat_id, str(chat_id), "telegram")
 
 
 # ── Shared helpers ─────────────────────────────────────────────────────────────
@@ -49,12 +80,20 @@ def _get_client_project(db: Session, client: Client) -> Optional[Project]:
     """Get the active project for a client, falling back to any project."""
     project = (
         db.query(Project)
-        .filter(Project.client_id == client.id, Project.status == "active")
+        .filter(
+            Project.client_id == client.id,
+            Project.status == "active",
+            Project.deleted_at.is_(None),
+        )
         .first()
     )
     if project:
         return project
-    return db.query(Project).filter(Project.client_id == client.id).first()
+    return (
+        db.query(Project)
+        .filter(Project.client_id == client.id, Project.deleted_at.is_(None))
+        .first()
+    )
 
 
 async def _get_project_github_stats(project: Optional[Project]) -> dict:
@@ -63,7 +102,8 @@ async def _get_project_github_stats(project: Optional[Project]) -> dict:
     try:
         return await get_github_stats_cached(str(project.id), project.github_repo)
     except Exception:
-        return {}
+        # {} means "no repo linked"; a repo we failed to read must be reported as a failure.
+        return {"error": "GitHub stats fetch failed"}
 
 
 def _serialize_project_milestones(db: Session, project: Optional[Project]) -> list[dict]:
@@ -301,7 +341,8 @@ async def process_incoming_message(
     media_url: Optional[str] = None,
     media_content_type: Optional[str] = None,
     media_auth: Optional[tuple] = None,
-) -> str:
+    reply_address: Optional[str] = None,
+) -> Optional[str]:
     """
     Core AI pipeline shared by WhatsApp and Telegram.
 
@@ -329,6 +370,26 @@ async def process_incoming_message(
         await _broadcast_incoming(client, message, channel)
 
         project = _get_client_project(db, client)
+
+        # Every inbound message is persisted — including from clients with no
+        # project, whose messages used to vanish (_save_chat_history needs one).
+        # Non-fatal: if `messages` isn't there yet (code deployed before the
+        # migration), the AI must keep answering exactly as before.
+        inbound = None
+        try:
+            inbound = message_store.record_inbound(
+                db, client, channel, message, project=project, language=_detect_message_language(message),
+            )
+            await message_store.broadcast_message(client, inbound)
+        except Exception as exc:
+            db.rollback()
+            logger.error("[%s] Failed to record inbound message: %s", channel.upper(), exc)
+
+        # A human owns this conversation (Take over / escalated): stay quiet.
+        if message_store.ai_paused(db, client):
+            logger.info("[%s] AI paused for client=%r — a human owns this conversation", channel.upper(), client.name)
+            return None
+
         project_name = project.name if project else "your project"
         github_stats = await _get_project_github_stats(project)
         milestones = _serialize_project_milestones(db, project)
@@ -346,12 +407,37 @@ async def process_incoming_message(
             milestones=milestones,
             client_question=message or "Hello",
             media_url=media_url,
+            allowed_repos=[project.github_repo] if project and project.github_repo else [],
         )
 
         reply = ai_result.get("response", "")
         if not reply:
             reply = t("ai_empty", detect_language(message))
 
+        outbound = None
+        try:
+            outbound = message_store.record_outbound(
+                db, client, channel, reply,
+                author_type="ai",
+                reply_to=inbound,
+                project=project,
+                model_used=ai_result.get("model") if ai_result.get("success") else None,
+                tokens_used=ai_result.get("tokens_used"),
+                ai_response_time_ms=ai_result.get("latency_ms"),
+            )
+            await message_store.broadcast_message(client, outbound)
+        except Exception as exc:
+            db.rollback()
+            logger.error("[%s] Failed to record AI reply: %s", channel.upper(), exc)
+        # The pipeline sends the reply itself now (it used to return it for the
+        # webhook to send), so the message's real sent/failed status is recorded.
+        if outbound is not None:
+            await message_store.deliver(db, client, outbound, address=reply_address)
+        elif reply_address:
+            await send_via(channel, reply_address, reply)
+
+        # Dual-write: stats, the conversations list and analytics still read
+        # chat_history until they move to `messages`.
         chat_entry = _save_chat_history(db, client, project, message, reply, ai_result, channel)
         await _broadcast_completed(client, chat_entry)
         await _update_conversation_state_from_ai_result(db, client, ai_result)
@@ -372,6 +458,10 @@ async def process_incoming_message(
             channel.upper(), client.name, elapsed_ms, e,
             exc_info=True,
         )
-        return t("pipeline_error", detect_language(message))
+        apology = t("pipeline_error", detect_language(message))
+        # The webhooks no longer send replies, so the apology goes out here.
+        if reply_address:
+            await send_via(channel, reply_address, apology)
+        return apology
     finally:
         db.close()

@@ -10,8 +10,10 @@ const buttonVariants = cva(
         variants: {
             variant: {
                 default: "bg-primary text-primary-foreground hover:bg-primary/90",
+                // Design Language "Destructive": heat-soft fill, heat text,
+                // heat/30 border — not a solid fill (white on #FF4D6D is ~3:1).
                 destructive:
-                    "bg-destructive text-destructive-foreground hover:bg-destructive/90",
+                    "border border-destructive/30 bg-destructive/15 font-semibold text-destructive hover:bg-destructive/25",
                 outline:
                     "border border-input bg-background hover:bg-accent hover:text-accent-foreground",
                 secondary:

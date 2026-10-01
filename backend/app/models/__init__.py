@@ -3,6 +3,7 @@ from app.models.client import Client
 from app.models.project import Project
 from app.models.milestone import Milestone
 from app.models.chat_history import ChatHistory
+from app.models.message import Message
 from app.models.conversation_state import ConversationState
 from app.models.github_cache import GitHubCache
 from app.models.plan import Plan
@@ -21,6 +22,7 @@ __all__ = [
     "Project",
     "Milestone",
     "ChatHistory",
+    "Message",
     "ConversationState",
     "GitHubCache",
     "Plan",

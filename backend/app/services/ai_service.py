@@ -36,11 +36,13 @@ _RETRYABLE_SIGNALS = (
 def _build_fallback_chain() -> list:
     """Return ordered list of configured providers to try.
 
-    Priority: Claude -> OpenAI -> Gemini. Claude is primary (funded, verified
+    Priority: Groq (open-weight, free tier) -> Claude -> OpenAI -> Gemini. Claude is primary (funded, verified
     working, best quality); OpenAI is the reliable fallback; Gemini sits last
     because its free-tier key runs out of credits and returns 429.
     """
     chain = []
+    if settings.GROQ_API_KEY:
+        chain.append("groq")
     if settings.ANTHROPIC_API_KEY:
         chain.append("claude")
     if settings.OPENAI_API_KEY:
@@ -67,6 +69,7 @@ async def generate_client_response(
     media_url: str = None,
     provider_name: str = None,
     api_key: str = None,
+    allowed_repos: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
     Generate AI response using the configured provider with automatic fallback.
@@ -104,7 +107,11 @@ async def generate_client_response(
             attempt + 1, len(providers_to_try), pname, client_name,
         )
         try:
-            agent = VoxlyAgent(provider_name=pname, api_key=api_key)
+            agent = VoxlyAgent(
+                provider_name=pname,
+                api_key=api_key,
+                allowed_repos=allowed_repos or [],
+            )
             result = await agent.chat(
                 user_message=client_question,
                 images=[media_url] if media_url else None,

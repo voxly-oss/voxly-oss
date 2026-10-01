@@ -1,7 +1,7 @@
 import logging
 import json
 import urllib.parse
-from typing import List, Dict, Any, Optional
+from typing import Iterable, List, Dict, Any, Optional
 import httpx
 import base64
 
@@ -137,7 +137,24 @@ class VoxlyAgent:
     5. Formulate final answer
     """
     
-    def __init__(self, provider_name: str = "claude", api_key: str = None):
+    def __init__(
+        self,
+        provider_name: str = "claude",
+        api_key: str = None,
+        allowed_repos: Iterable[str] = (),
+        allow_writes: bool = False,
+        allow_internal_docs: bool = False,
+    ):
+        """
+        Tools are opt-in and fail closed. Message text (from an end client, or from
+        repo/log content) is untrusted, and the GitHub tools use the platform token:
+
+        - allowed_repos: the only repos the GitHub tools may touch (the project in
+          scope). Empty means no GitHub tools at all.
+        - allow_writes: also expose issue creation. Only for an authenticated agency
+          user, never for an end client's message.
+        - allow_internal_docs: expose Voxly's own docs/ search. Agency admin only.
+        """
         # Auto-detect best provider if default is chosen but key is missing
         if provider_name == "claude" and not api_key:
             from app.config import settings
@@ -146,12 +163,14 @@ class VoxlyAgent:
                 provider_name = "openai"
 
         self.provider = get_provider(provider_name, api_key)
-        self.tools: List[Tool] = [
-            GitHubSearchIssuesTool(),
-            GitHubGetFileTool(),
-            GitHubCreateIssueTool(),
-            LocalDocsTool()
-        ]
+        repos = [r for r in allowed_repos if r]
+        self.tools: List[Tool] = []
+        if repos:
+            self.tools += [GitHubSearchIssuesTool(repos), GitHubGetFileTool(repos)]
+            if allow_writes:
+                self.tools.append(GitHubCreateIssueTool(repos))
+        if allow_internal_docs:
+            self.tools.append(LocalDocsTool())
         self.tool_map = {t.name: t for t in self.tools}
         self.max_steps = 5  # Safety rail: prevent infinite tool loops
 

@@ -103,12 +103,14 @@ class ClaudeProvider(AIProvider):
             # Format tools for Anthropic (input_schema is already correct from base.py)
             anthropic_tools = [t.to_schema() for t in tools]
             
+            # An empty tools list is rejected by the API, so only send tools when there are any.
+            tool_kwargs = {"tools": anthropic_tools} if anthropic_tools else {}
             response = await self.client.messages.create(
                 model=self.default_model,
                 max_tokens=max_tokens,
                 system=system_prompt,
                 messages=messages,
-                tools=anthropic_tools,
+                **tool_kwargs,
             )
             return response
         except Exception as e:

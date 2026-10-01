@@ -2,8 +2,9 @@
 
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { channelsAPI, clientsAPI } from '@/lib/api';
-import type { ChannelActivity, Client } from '@/types';
+import { channelsAPI } from '@/lib/api';
+import { clientsQuery as clientsQueryOptions } from '@/lib/queries';
+import type { ChannelActivity } from '@/types';
 import Link from 'next/link';
 import {
     Plus, Search, AlertTriangle, MessageSquare, Send, ChevronLeft, ChevronRight,
@@ -58,8 +59,7 @@ export default function ChannelsPage() {
         queryFn: async () => (await channelsAPI.list()).data as ChannelActivity[],
     });
     const clientsQuery = useQuery({
-        queryKey: ['clients'],
-        queryFn: async () => (await clientsAPI.list()).data as Client[],
+        ...clientsQueryOptions,
     });
 
     const clients = useMemo(() => clientsQuery.data ?? [], [clientsQuery.data]);
@@ -144,8 +144,14 @@ export default function ChannelsPage() {
                             {' '}across {byType.filter(t => t.count > 0).length} channel type{byType.filter(t => t.count > 0).length === 1 ? '' : 's'}
                         </p>
                     </div>
-                    <Link href="/clients/new" className="bg-primary hover:bg-primary/90 text-primary-foreground font-semibold text-[13px] rounded-lg px-4 py-[9px] flex items-center gap-[7px] transition-colors">
-                        <Plus className="w-[15px] h-[15px]" /> Connect channel
+                    {/* Channels connect per client (WhatsApp number / Telegram chat ID),
+                        so this goes to Add Client — the label now says so. */}
+                    <Link
+                        href="/clients?new=1"
+                        title="Channels connect per client — add a client's WhatsApp number or Telegram chat ID"
+                        className="bg-primary hover:bg-primary/90 text-primary-foreground font-semibold text-[13px] rounded-lg px-4 py-[9px] flex items-center gap-[7px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                    >
+                        <Plus className="w-[15px] h-[15px]" /> Connect a client
                     </Link>
                 </div>
 
@@ -218,7 +224,7 @@ export default function ChannelsPage() {
                                     Clear filters
                                 </Button>
                             ) : (
-                                <Link href="/clients/new">
+                                <Link href="/clients?new=1">
                                     <Button className="bg-primary hover:bg-primary/90 text-primary-foreground">
                                         <Plus className="w-4 h-4 mr-2" />Add a Client
                                     </Button>
