@@ -98,6 +98,9 @@ from app.api.v1.channels import router as channels_router
 app.include_router(channels_router, prefix="/api/v1/channels", tags=["Channels"])
 from app.api.v1.messages import router as messages_router
 app.include_router(messages_router, prefix="/api/v1/conversations", tags=["Conversations"])
+from app.api.v1.portal import agency_router as chat_link_router, router as portal_router
+app.include_router(chat_link_router, prefix="/api/v1/clients", tags=["Client chat link"])
+app.include_router(portal_router, prefix="/api/v1/portal", tags=["Client portal"])
 
 
 @app.get("/", tags=["Root"])

@@ -1,6 +1,6 @@
 """Channel adapters — the one interface every messaging channel implements.
 
-WhatsApp and Telegram today; Slack and the native Voxly channel plug in here
+WhatsApp, Telegram and the native Voxly chat link today; Slack plugs in here
 later. Code outside this module should never branch on the channel name to
 send something: resolve an adapter and call it.
 """
@@ -10,7 +10,10 @@ import logging
 from dataclasses import dataclass
 from typing import Optional, Protocol
 
+from sqlalchemy.orm import object_session
+
 from app.models.client import Client
+from app.models.client_chat_link import ClientChatLink
 from app.services import telegram_service, whatsapp_service
 
 logger = logging.getLogger(__name__)
@@ -60,9 +63,35 @@ class TelegramAdapter:
         return SendResult(ok=bool(ok), error=None if ok else "Telegram rejected the message")
 
 
+class VoxlyAdapter:
+    """The native channel: the client's personal chat link (web / PWA).
+
+    There is no provider to hand the text to — the message row already
+    exists and message_store pushes it to the client's portal socket — so
+    "sent" here means it is in the client's Voxly inbox. Reachable while the
+    client has an active chat link, even before they first open it.
+    """
+    name = "voxly"
+
+    def address_for(self, client: Client) -> Optional[str]:
+        db = object_session(client)
+        if db is None:
+            return None
+        has_link = (
+            db.query(ClientChatLink.id)
+            .filter(ClientChatLink.client_id == client.id, ClientChatLink.revoked_at.is_(None))
+            .first()
+        )
+        return str(client.id) if has_link else None
+
+    async def send_text(self, address: str, text: str) -> SendResult:
+        return SendResult(ok=True)
+
+
 _ADAPTERS: dict[str, ChannelAdapter] = {
     "whatsapp": WhatsAppAdapter(),
     "telegram": TelegramAdapter(),
+    "voxly": VoxlyAdapter(),
 }
 
 SUPPORTED_CHANNELS = tuple(_ADAPTERS)

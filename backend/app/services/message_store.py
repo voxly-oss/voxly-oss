@@ -17,7 +17,7 @@ from app.models.conversation_state import ConversationState
 from app.models.message import Message
 from app.models.project import Project
 from app.services.channels import SendResult, get_adapter, send_via
-from app.websockets.manager import build_event, manager
+from app.websockets.manager import build_event, manager, portal_manager
 
 logger = logging.getLogger(__name__)
 
@@ -51,9 +51,30 @@ def serialize(message: Message) -> dict:
     }
 
 
+def visible_to_client(message: Message) -> bool:
+    """What the client's own Voxly chat shows: everything they wrote, on any
+    channel, and every reply that actually went out. A reply that is still
+    queued or failed never reached them, so it isn't shown as if it had."""
+    return message.direction == "inbound" or message.status == "sent"
+
+
+def serialize_for_client(message: Message) -> dict:
+    """The client-facing shape: no teammate ids, models, errors or project ids."""
+    return {
+        "id": str(message.id),
+        "direction": message.direction,
+        "author_type": message.author_type,
+        "channel": message.channel,
+        "body": message.body,
+        "status": message.status,
+        "created_at": message.created_at.isoformat() + "Z" if message.created_at else None,
+    }
+
+
 async def broadcast_message(client: Client, message: Message, event: str = "message.created") -> None:
-    """Realtime fan-out to the client owner's dashboards. Never raises — a
-    dropped socket must not fail the message itself."""
+    """Realtime fan-out to the client owner's dashboards, and — for what the
+    client may see — to the client's own chat. Never raises: a dropped socket
+    must not fail the message itself."""
     try:
         await manager.broadcast(
             build_event(
@@ -67,6 +88,14 @@ async def broadcast_message(client: Client, message: Message, event: str = "mess
         )
     except Exception as exc:
         logger.error("WebSocket broadcast (%s) failed: %s", event, exc)
+    if visible_to_client(message):
+        try:
+            await portal_manager.broadcast(
+                build_event(event, payload={"message": serialize_for_client(message)}, conversation_id=str(client.id)),
+                str(client.id),
+            )
+        except Exception as exc:
+            logger.error("Portal broadcast (%s) failed: %s", event, exc)
 
 
 def ai_paused(db: Session, client: Client) -> bool:
@@ -178,7 +207,7 @@ def default_channel_for(db: Session, client: Client) -> Optional[str]:
     )
     if last_inbound and get_adapter(last_inbound.channel):
         return last_inbound.channel
-    for name in ("whatsapp", "telegram"):
+    for name in ("whatsapp", "telegram", "voxly"):
         adapter = get_adapter(name)
         if adapter and adapter.address_for(client):
             return name
