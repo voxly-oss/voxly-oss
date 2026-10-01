@@ -1,7 +1,8 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { clientsAPI, projectsAPI, dashboardAPI } from '@/lib/api';
+import { projectsAPI, dashboardAPI } from '@/lib/api';
+import { clientsQuery } from '@/lib/queries';
 import { Download } from 'lucide-react';
 import Link from 'next/link';
 import { Panel, PanelRow, PanelText } from '@/components/SidePanel';
@@ -24,7 +25,7 @@ const RANGES = ['7D', '30D', '90D', 'Custom'] as const;
 
 export default function AnalyticsPage() {
 
-    const { data: clients = [] } = useQuery({ queryKey: ['clients'], queryFn: async () => (await clientsAPI.list()).data });
+    const { data: clients = [] } = useQuery({ ...clientsQuery, });
     const { data: projects = [] } = useQuery({ queryKey: ['projects'], queryFn: async () => (await projectsAPI.list()).data });
     const { data: stats } = useQuery({
         queryKey: ['dashboard-stats'],

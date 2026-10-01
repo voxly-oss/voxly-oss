@@ -3,7 +3,8 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
-import { chatAPI, channelsAPI, clientsAPI, dashboardAPI, projectsAPI } from '@/lib/api';
+import { chatAPI, channelsAPI, dashboardAPI, projectsAPI } from '@/lib/api';
+import { clientsQuery as clientsQueryOptions } from '@/lib/queries';
 import {
     Sparkles, AlertTriangle, Check, ChevronRight,
     Users, MessageSquare, Code2, Radio, TrendingUp, TrendingDown,
@@ -12,7 +13,7 @@ import {
 import EmptyState from '@/components/EmptyState';
 import { Button } from '@/components/ui/button';
 import { QUIET_AFTER_DAYS, isQuietChannel } from '@/lib/channelActivity';
-import type { ChannelActivity, Client, ConversationsListResponse, Project } from '@/types';
+import type { ChannelActivity, ConversationsListResponse, Project } from '@/types';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -114,8 +115,7 @@ export default function DashboardPage() {
     const [feedFilter, setFeedFilter] = useState<'All' | 'AI' | 'GitHub' | 'Channels'>('All');
 
     const clientsQuery = useQuery({
-        queryKey: ['clients'],
-        queryFn: async () => (await clientsAPI.list()).data as Client[],
+        ...clientsQueryOptions,
     });
     const projectsQuery = useQuery({
         queryKey: ['projects'],

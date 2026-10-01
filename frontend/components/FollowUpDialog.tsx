@@ -3,7 +3,8 @@
 import { useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Loader2, Send } from 'lucide-react';
-import { clientsAPI, notificationsAPI, getApiErrorMessage } from '@/lib/api';
+import { notificationsAPI, getApiErrorMessage } from '@/lib/api';
+import { clientsQuery } from '@/lib/queries';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -19,7 +20,6 @@ import {
 import FieldError from '@/components/FieldError';
 import { useToast } from '@/hooks/use-toast';
 import { formatPhone } from '@/lib/utils';
-import type { Client } from '@/types';
 
 // Backend caps the body at 1000 chars and rate-limits to 10/min — enforced
 // here too rather than discovered on failure.
@@ -48,8 +48,7 @@ export default function FollowUpDialog({ open, onOpenChange, client }: FollowUpD
     const needsPicker = !client;
 
     const { data: clients = [], isLoading: clientsLoading } = useQuery({
-        queryKey: ['clients'],
-        queryFn: async () => (await clientsAPI.list()).data as Client[],
+        ...clientsQuery,
         enabled: open && needsPicker,
     });
 

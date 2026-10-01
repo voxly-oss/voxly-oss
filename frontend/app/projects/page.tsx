@@ -2,7 +2,8 @@
 
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { projectsAPI, clientsAPI, channelsAPI, getApiErrorMessage } from '@/lib/api';
+import { projectsAPI, channelsAPI, getApiErrorMessage } from '@/lib/api';
+import { clientsQuery } from '@/lib/queries';
 import { Button } from '@/components/ui/button';
 import {
     DropdownMenu,
@@ -19,7 +20,7 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { getInitials } from '@/lib/utils';
-import type { Project, Client, ChannelActivity } from '@/types';
+import type { Project, ChannelActivity } from '@/types';
 import { motion, AnimatePresence } from 'framer-motion';
 import EmptyState from '@/components/EmptyState';
 import ProjectFormDialog from '@/components/ProjectFormDialog';
@@ -101,8 +102,7 @@ export default function ProjectsListPage() {
     });
 
     const { data: clients = [] } = useQuery({
-        queryKey: ['clients'],
-        queryFn: async () => (await clientsAPI.list()).data as Client[],
+        ...clientsQuery,
     });
 
     // Real per-client conversation channels, so "WhatsApp" on a row means
