@@ -116,28 +116,30 @@ export default function ClientFormDialog({ open, onOpenChange, client, onSaved }
     }, [open, client, reset]);
 
     const mutation = useMutation({
-        mutationFn: (data: ClientFormData) => {
-            if (client) {
+        // Resolve to the saved Client, not the raw axios response: newer axios
+        // types carry the request body in AxiosResponse, so the create and
+        // update responses stopped being one type and broke `next build`.
+        mutationFn: async (data: ClientFormData): Promise<Client> => {
+            const res = client
                 // null clears a field (update endpoint uses exclude_unset).
-                return clientsAPI.update(client.id, {
+                ? await clientsAPI.update(client.id, {
                     name: data.name.trim(),
                     phone: data.phone.trim(),
                     email: nullIfBlank(data.email),
                     company: nullIfBlank(data.company),
                     telegram_chat_id: nullIfBlank(data.telegram_chat_id),
                     is_active: data.is_active,
+                })
+                : await clientsAPI.create({
+                    name: data.name.trim(),
+                    phone: data.phone.trim(),
+                    email: undefinedIfBlank(data.email),
+                    company: undefinedIfBlank(data.company),
+                    telegram_chat_id: undefinedIfBlank(data.telegram_chat_id),
                 });
-            }
-            return clientsAPI.create({
-                name: data.name.trim(),
-                phone: data.phone.trim(),
-                email: undefinedIfBlank(data.email),
-                company: undefinedIfBlank(data.company),
-                telegram_chat_id: undefinedIfBlank(data.telegram_chat_id),
-            });
+            return res.data as Client;
         },
-        onSuccess: (res) => {
-            const saved = res.data as Client;
+        onSuccess: (saved) => {
             queryClient.setQueryData(['client', saved.id], saved);
             queryClient.invalidateQueries({ queryKey: ['clients'] });
             queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });

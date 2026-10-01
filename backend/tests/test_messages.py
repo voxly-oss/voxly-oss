@@ -203,3 +203,94 @@ def test_backfill_splits_pairs_links_replies_and_is_idempotent(client: TestClien
     assert rows[1].reply_to_id == rows[0].id and rows[1].status == "sent"
 
     assert backfill_messages_from_chat_history(db_session.connection()) == 0
+
+
+def test_inbox_lists_latest_activity_first_with_agent_replies_and_no_project_clients(client: TestClient, db_session, sent):
+    token = _register_and_get_token(client, "msg_inbox@test.com")
+    quiet_id = _create_client(client, token, phone="+911700000011", name="Quiet Co")
+    busy_id = _create_client(client, token, phone="+911700000012", name="Busy Co")
+    _create_client(client, token, phone="+911700000013", name="Never Wrote Co")
+    quiet = db_session.query(Client).filter(Client.id == uuid.UUID(quiet_id)).first()
+    busy = db_session.query(Client).filter(Client.id == uuid.UUID(busy_id)).first()
+    old = message_store.record_inbound(db_session, quiet, "whatsapp", "invoice question")
+    old.created_at = datetime(2026, 9, 1, 9, 0)
+    first = message_store.record_inbound(db_session, busy, "whatsapp", "any update on the logo?")
+    first.created_at = datetime(2026, 9, 1, 10, 0)
+    db_session.commit()
+    client.post(f"/api/v1/conversations/{busy_id}/messages", json={"text": "Sending it tonight"}, headers=_auth_headers(token))
+
+    page = client.get("/api/v1/conversations", headers=_auth_headers(token)).json()
+
+    assert page["total"] == 2  # a client who never wrote isn't a conversation yet
+    rows = page["conversations"]
+    assert [r["client_name"] for r in rows] == ["Busy Co", "Quiet Co"]
+    assert rows[0]["last_message"]["author_type"] == "agent"
+    assert rows[0]["last_message"]["body"] == "Sending it tonight"
+    assert rows[0]["message_count"] == 2
+    assert rows[0]["awaiting_reply"] is False
+    assert rows[0]["status"] == "awaiting_human"
+    assert rows[1]["awaiting_reply"] is True and rows[1]["status"] is None
+
+
+def test_inbox_search_status_filter_and_tenant_scope(client: TestClient, db_session):
+    token = _register_and_get_token(client, "msg_inbox_filter@test.com")
+    a_id = _create_client(client, token, phone="+911700000021", name="Alpha Labs")
+    b_id = _create_client(client, token, phone="+911700000022", name="Beta Works")
+    a = db_session.query(Client).filter(Client.id == uuid.UUID(a_id)).first()
+    b = db_session.query(Client).filter(Client.id == uuid.UUID(b_id)).first()
+    message_store.record_inbound(db_session, a, "whatsapp", "the staging link is broken")
+    message_store.record_inbound(db_session, b, "telegram", "hello")
+    upsert_conversation_state(db_session, b.id, "escalated", updated_by_user_id=b.user_id)
+
+    def names(query):
+        resp = client.get(f"/api/v1/conversations{query}", headers=_auth_headers(token))
+        assert resp.status_code == 200, resp.text
+        return [r["client_name"] for r in resp.json()["conversations"]]
+
+    assert names("?search=staging") == ["Alpha Labs"]  # message body
+    assert names("?search=beta") == ["Beta Works"]     # client name, case-insensitive
+    assert names("?status=escalated") == ["Beta Works"]
+    assert client.get("/api/v1/conversations?status=bogus", headers=_auth_headers(token)).status_code == 422
+
+    other = _register_and_get_token(client, "msg_inbox_other@test.com")
+    assert client.get("/api/v1/conversations", headers=_auth_headers(other)).json() == {"total": 0, "conversations": []}
+
+
+def test_conversation_detail_reports_channels_and_the_ai_pause(client: TestClient, db_session, sent):
+    token = _register_and_get_token(client, "msg_detail@test.com")
+    client_id = _create_client(client, token, phone="+911700000031")
+
+    before = client.get(f"/api/v1/conversations/{client_id}", headers=_auth_headers(token)).json()
+    assert before["channels"] == ["whatsapp"]
+    assert before["default_channel"] == "whatsapp"
+    assert before["ai_paused"] is False and before["status"] is None
+
+    client.post(f"/api/v1/conversations/{client_id}/messages", json={"text": "Hi!"}, headers=_auth_headers(token))
+    after = client.get(f"/api/v1/conversations/{client_id}", headers=_auth_headers(token)).json()
+    assert after["ai_paused"] is True and after["status"] == "awaiting_human"
+
+    other = _register_and_get_token(client, "msg_detail_other@test.com")
+    assert client.get(f"/api/v1/conversations/{client_id}", headers=_auth_headers(other)).status_code == 404
+
+
+def test_a_failed_message_can_be_retried_in_place(client: TestClient, monkeypatch):
+    token = _register_and_get_token(client, "msg_retry@test.com")
+    client_id = _create_client(client, token, phone="+911700000041")
+    outcomes = [False, True]
+
+    async def _flaky(to_number, message):
+        return outcomes.pop(0)
+
+    monkeypatch.setattr("app.services.whatsapp_service.send_whatsapp_message", _flaky)
+    failed = client.post(f"/api/v1/conversations/{client_id}/messages", json={"text": "hello"}, headers=_auth_headers(token)).json()
+    assert failed["status"] == "failed"
+
+    retried = client.post(f"/api/v1/conversations/{client_id}/messages/{failed['id']}/retry", headers=_auth_headers(token))
+    assert retried.status_code == 200
+    assert retried.json()["id"] == failed["id"]
+    assert retried.json()["status"] == "sent" and retried.json()["error"] is None
+
+    again = client.post(f"/api/v1/conversations/{client_id}/messages/{failed['id']}/retry", headers=_auth_headers(token))
+    assert again.status_code == 409
+    thread = client.get(f"/api/v1/conversations/{client_id}/messages", headers=_auth_headers(token)).json()
+    assert len(thread["messages"]) == 1

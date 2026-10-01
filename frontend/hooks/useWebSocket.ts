@@ -18,9 +18,15 @@ const MAX_RETRIES = 5;
 const BASE_DELAY_MS = 1000;       // 1s → 2s → 4s → 8s → 16s
 const PING_INTERVAL_MS = 30000;   // Send ping every 30s to keep connection alive
 
-export function useWebSocket() {
+/**
+ * `lastMessage` is React state, so events arriving in the same tick collapse
+ * to the last one. Anything that must see every event (a chat thread) passes
+ * `onEvent`, which is called once per event, in order.
+ */
+export function useWebSocket(onEvent?: (message: WebSocketMessage) => void) {
     const { token } = useAuth();
     const { toast } = useToast();
+    const onEventRef = useRef(onEvent);
     const ws = useRef<WebSocket | null>(null);
     const pingInterval = useRef<NodeJS.Timeout | null>(null);
     const retryCount = useRef(0);
@@ -80,6 +86,7 @@ export function useWebSocket() {
                     const message = JSON.parse(event.data);
                     // Ignore pong responses
                     if (message.type === 'pong') return;
+                    onEventRef.current?.(message);
                     setLastMessage(message);
                 } catch (e) {
                     console.error('[WS] Failed to parse message', e);
@@ -121,6 +128,10 @@ export function useWebSocket() {
     useEffect(() => {
         connectRef.current = connect;
     }, [connect]);
+
+    useEffect(() => {
+        onEventRef.current = onEvent;
+    }, [onEvent]);
 
     useEffect(() => {
         if (token) {

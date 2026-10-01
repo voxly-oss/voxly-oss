@@ -156,6 +156,17 @@ async def deliver(db: Session, client: Client, message: Message, address: Option
     return message
 
 
+async def retry(db: Session, client: Client, message: Message) -> Message:
+    """Re-send a failed outbound message in place (same row, same thread
+    position), so the thread never shows a failed copy next to a sent one."""
+    message.status = "queued"
+    message.error = None
+    db.commit()
+    db.refresh(message)
+    await broadcast_message(client, message, event="message.updated")
+    return await deliver(db, client, message)
+
+
 def default_channel_for(db: Session, client: Client) -> Optional[str]:
     """Reply on the channel the client last wrote on; otherwise the first
     channel they have an address for."""
