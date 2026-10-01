@@ -6,6 +6,7 @@ import { useQueries, useQuery } from '@tanstack/react-query';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { channelsAPI, chatAPI, dashboardAPI, projectsAPI, getApiErrorMessage } from '@/lib/api';
 import { clientsQuery } from '@/lib/queries';
+import { describeMonthOverMonth, isThisMonth } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Panel, PanelRow, PanelText } from '@/components/SidePanel';
 import type { ChannelActivity, ConversationsListResponse, DashboardStats, Project } from '@/types';
@@ -146,12 +147,7 @@ export default function AnalyticsPage() {
     const withStatus = STATUS_ROWS.reduce((n, _s, i) => n + (totalFor(i) ?? 0), 0);
 
     const stats = statsQuery.data;
-    const now = new Date();
-
-    const newClientsThisMonth = clients.filter((c) => {
-        const d = new Date(c.created_at);
-        return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
-    }).length;
+    const newClientsThisMonth = clients.filter((c) => isThisMonth(c.created_at)).length;
 
     const projectsSummary = useMemo(() => {
         const byStatus = { active: 0, paused: 0, completed: 0, cancelled: 0 } as Record<Project['status'], number>;
@@ -196,19 +192,8 @@ export default function AnalyticsPage() {
     const weekTotal = byDay.reduce((n, d) => n + d.count, 0);
     const dayMax = Math.max(...byDay.map((d) => d.count), 1);
 
-    // messages_delta_pct is 100.0 when last month had zero messages — a
-    // sentinel, not a growth figure — so derive the note from the raw counts.
-    let monthNote: React.ReactNode = undefined;
-    let monthTone: 'muted' | 'good' | 'warn' = 'muted';
-    if (stats) {
-        if (stats.messages_last_month === 0) {
-            monthNote = stats.messages_this_month === 0 ? 'No messages yet' : 'None last month';
-        } else {
-            const pct = Math.round(((stats.messages_this_month - stats.messages_last_month) / stats.messages_last_month) * 100);
-            monthNote = `${pct >= 0 ? '↑' : '↓'} ${Math.abs(pct)}% vs last month`;
-            monthTone = pct >= 0 ? 'good' : 'warn';
-        }
-    }
+    // From raw counts — messages_delta_pct is a sentinel 100.0 when last month was 0.
+    const month = stats ? describeMonthOverMonth(stats.messages_this_month, stats.messages_last_month) : null;
 
     const dash = '—';
     const awaitingTotal = totalFor(0);
@@ -247,7 +232,7 @@ export default function AnalyticsPage() {
                         noteTone={projectsSummary.overdue ? 'warn' : 'muted'}
                         href="/projects"
                     />
-                    <Tile label="Messages this month" value={stats ? stats.messages_this_month.toLocaleString() : dash} note={monthNote} noteTone={monthTone} />
+                    <Tile label="Messages this month" value={stats ? stats.messages_this_month.toLocaleString() : dash} note={month?.text} noteTone={month?.tone} />
                     <Tile label="Messages · last 7 days" value={stats ? weekTotal.toLocaleString() : dash} note={stats ? `${stats.total_messages.toLocaleString()} all-time` : undefined}>
                         <Sparkline values={byDay.map((d) => d.count)} />
                     </Tile>

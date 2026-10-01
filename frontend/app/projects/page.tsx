@@ -1,6 +1,7 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { Suspense, useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { projectsAPI, channelsAPI, getApiErrorMessage } from '@/lib/api';
 import { clientsQuery } from '@/lib/queries';
@@ -67,12 +68,26 @@ function Panel({ title, badge, defaultOpen = true, children }: { title: string; 
 
 const GRID_COLS = 'grid grid-cols-[2fr_1.2fr_1.2fr_1.2fr_1.1fr_0.85fr_28px]';
 
+// useSearchParams (/projects?new=1, from the dashboard setup checklist) needs a
+// Suspense boundary or `next build` fails the static prerender of this route.
 export default function ProjectsListPage() {
+    return (
+        <Suspense fallback={<div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>}>
+            <ProjectsList />
+        </Suspense>
+    );
+}
+
+function ProjectsList() {
     const [searchQuery, setSearchQuery] = useState('');
     const [statusFilter, setStatusFilter] = useState<typeof STATUS_FILTERS[number]>('All');
     const [channelFilter, setChannelFilter] = useState<Set<string>>(new Set());
     const [page, setPage] = useState(1);
     const [projectDialogOpen, setProjectDialogOpen] = useState(false);
+    // /projects?new=1 opens the create dialog; closing strips the param with
+    // history.replaceState (router.replace doesn't commit here in production).
+    const searchParams = useSearchParams();
+    const wantsCreate = searchParams.get('new') === '1';
     const [editingProject, setEditingProject] = useState<Project | null>(null);
     const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
     const { toast } = useToast();
@@ -504,9 +519,10 @@ export default function ProjectsListPage() {
             </div>
 
             <ProjectFormDialog
-                open={projectDialogOpen}
+                open={projectDialogOpen || wantsCreate}
                 onOpenChange={(open) => {
                     setProjectDialogOpen(open);
+                    if (!open && wantsCreate) window.history.replaceState(null, '', '/projects');
                     if (!open) setEditingProject(null);
                 }}
                 project={editingProject}
