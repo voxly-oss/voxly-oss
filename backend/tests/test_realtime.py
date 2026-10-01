@@ -261,19 +261,27 @@ async def test_successful_turn_broadcasts_received_completed_and_state(client: T
         })
         await process_incoming_message(channel="whatsapp", client=db_client, message="status?")
 
-    event_names = [call.args[0]["event"] for call in mock_broadcast.call_args_list]
-    assert event_names == [
+    events = [call.args[0] for call in mock_broadcast.call_args_list]
+    # The three conversation.* events keep their contract and order; the
+    # per-message events (messages table) are interleaved between them.
+    legacy = [e for e in events if e["event"].startswith("conversation.")]
+    assert [e["event"] for e in legacy] == [
         "conversation.message_received",
         "conversation.message_completed",
         "conversation.state_changed",
     ]
+    message_events = [e for e in events if e["event"].startswith("message.")]
+    assert [e["event"] for e in message_events] == ["message.created", "message.created", "message.updated"]
+    assert message_events[0]["payload"]["message"]["author_type"] == "client"
+    assert message_events[1]["payload"]["message"]["author_type"] == "ai"
+    assert message_events[2]["payload"]["message"]["status"] == "sent"
 
-    completed_event = mock_broadcast.call_args_list[1].args[0]
+    completed_event = legacy[1]
     assert completed_event["payload"]["response"] == "All good!"
     assert completed_event["payload"]["ai_response"] == "All good!"
     assert completed_event["conversation_id"] == str(db_client.id)
 
-    state_event = mock_broadcast.call_args_list[2].args[0]
+    state_event = legacy[2]
     assert state_event["payload"]["status"] == "ai_handling"
 
 
@@ -292,13 +300,14 @@ async def test_failed_turn_still_broadcasts_all_three_with_real_content(client: 
         mock_instance.chat = AsyncMock(return_value={"success": False, "error": "all providers exhausted"})
         await process_incoming_message(channel="whatsapp", client=db_client, message="status?")
 
-    event_names = [call.args[0]["event"] for call in mock_broadcast.call_args_list]
-    assert event_names == [
+    events = [call.args[0] for call in mock_broadcast.call_args_list]
+    legacy = [e for e in events if e["event"].startswith("conversation.")]
+    assert [e["event"] for e in legacy] == [
         "conversation.message_received",
         "conversation.message_completed",
         "conversation.state_changed",
     ]
-    state_event = mock_broadcast.call_args_list[2].args[0]
+    state_event = legacy[2]
     assert state_event["payload"]["status"] == "awaiting_human"
 
 

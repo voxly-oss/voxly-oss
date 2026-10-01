@@ -28,6 +28,8 @@ from app.services.cache_service import get_github_stats_cached
 from app.services.localization import detect_language, t
 from app.services.transcription_service import transcribe_audio
 from app.websockets.manager import manager, build_event
+from app.services import message_store
+from app.services.channels import send_via
 
 logger = logging.getLogger(__name__)
 
@@ -339,7 +341,8 @@ async def process_incoming_message(
     media_url: Optional[str] = None,
     media_content_type: Optional[str] = None,
     media_auth: Optional[tuple] = None,
-) -> str:
+    reply_address: Optional[str] = None,
+) -> Optional[str]:
     """
     Core AI pipeline shared by WhatsApp and Telegram.
 
@@ -367,6 +370,26 @@ async def process_incoming_message(
         await _broadcast_incoming(client, message, channel)
 
         project = _get_client_project(db, client)
+
+        # Every inbound message is persisted — including from clients with no
+        # project, whose messages used to vanish (_save_chat_history needs one).
+        # Non-fatal: if `messages` isn't there yet (code deployed before the
+        # migration), the AI must keep answering exactly as before.
+        inbound = None
+        try:
+            inbound = message_store.record_inbound(
+                db, client, channel, message, project=project, language=_detect_message_language(message),
+            )
+            await message_store.broadcast_message(client, inbound)
+        except Exception as exc:
+            db.rollback()
+            logger.error("[%s] Failed to record inbound message: %s", channel.upper(), exc)
+
+        # A human owns this conversation (Take over / escalated): stay quiet.
+        if message_store.ai_paused(db, client):
+            logger.info("[%s] AI paused for client=%r — a human owns this conversation", channel.upper(), client.name)
+            return None
+
         project_name = project.name if project else "your project"
         github_stats = await _get_project_github_stats(project)
         milestones = _serialize_project_milestones(db, project)
@@ -391,6 +414,30 @@ async def process_incoming_message(
         if not reply:
             reply = t("ai_empty", detect_language(message))
 
+        outbound = None
+        try:
+            outbound = message_store.record_outbound(
+                db, client, channel, reply,
+                author_type="ai",
+                reply_to=inbound,
+                project=project,
+                model_used=ai_result.get("model") if ai_result.get("success") else None,
+                tokens_used=ai_result.get("tokens_used"),
+                ai_response_time_ms=ai_result.get("latency_ms"),
+            )
+            await message_store.broadcast_message(client, outbound)
+        except Exception as exc:
+            db.rollback()
+            logger.error("[%s] Failed to record AI reply: %s", channel.upper(), exc)
+        # The pipeline sends the reply itself now (it used to return it for the
+        # webhook to send), so the message's real sent/failed status is recorded.
+        if outbound is not None:
+            await message_store.deliver(db, client, outbound, address=reply_address)
+        elif reply_address:
+            await send_via(channel, reply_address, reply)
+
+        # Dual-write: stats, the conversations list and analytics still read
+        # chat_history until they move to `messages`.
         chat_entry = _save_chat_history(db, client, project, message, reply, ai_result, channel)
         await _broadcast_completed(client, chat_entry)
         await _update_conversation_state_from_ai_result(db, client, ai_result)
@@ -411,6 +458,10 @@ async def process_incoming_message(
             channel.upper(), client.name, elapsed_ms, e,
             exc_info=True,
         )
-        return t("pipeline_error", detect_language(message))
+        apology = t("pipeline_error", detect_language(message))
+        # The webhooks no longer send replies, so the apology goes out here.
+        if reply_address:
+            await send_via(channel, reply_address, apology)
+        return apology
     finally:
         db.close()

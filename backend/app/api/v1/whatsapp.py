@@ -137,13 +137,11 @@ async def _process_whatsapp_message(
             media_url=media_url,
             media_content_type=media_content_type,
             media_auth=media_auth,
+            reply_address=phone,
         )
-
-        success = await send_whatsapp_message(to_number=phone, message=reply)
-        if success:
-            logger.info(f"Reply sent for message {message_sid}")
-        else:
-            logger.error(f"Failed to send reply for message {message_sid}")
+        # The pipeline sends (and records the delivery status of) the reply.
+        if reply is None:
+            logger.info(f"AI paused (human owns the conversation) for message {message_sid}")
 
     except Exception as e:
         logger.error(f"Unexpected error processing WhatsApp message: {e}", exc_info=True)

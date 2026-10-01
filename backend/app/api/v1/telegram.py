@@ -133,10 +133,11 @@ async def _process_telegram_message(
             message=text or "Hello",
             media_url=media_url,
             media_content_type=media_content_type,
+            reply_address=chat_id,
         )
-
-        await send_telegram_message(chat_id, reply)
-        logger.info(f"Telegram reply sent to chat {chat_id[:4]}***")
+        # The pipeline sends (and records the delivery status of) the reply.
+        if reply is None:
+            logger.info(f"AI paused (human owns the conversation) for chat {chat_id[:4]}***")
 
     except Exception as e:
         logger.error(f"Error processing Telegram message: {e}", exc_info=True)
