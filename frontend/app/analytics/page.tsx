@@ -1,267 +1,429 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
-import { projectsAPI, dashboardAPI } from '@/lib/api';
-import { clientsQuery } from '@/lib/queries';
-import { Download } from 'lucide-react';
+import { useMemo } from 'react';
 import Link from 'next/link';
+import { useQueries, useQuery } from '@tanstack/react-query';
+import { AlertTriangle, RefreshCw } from 'lucide-react';
+import { channelsAPI, chatAPI, dashboardAPI, projectsAPI, getApiErrorMessage } from '@/lib/api';
+import { clientsQuery } from '@/lib/queries';
+import { Button } from '@/components/ui/button';
 import { Panel, PanelRow, PanelText } from '@/components/SidePanel';
-import PreviewBadge, { PreviewBanner, PreviewMark } from '@/components/PreviewBadge';
+import type { ChannelActivity, ConversationsListResponse, DashboardStats, Project } from '@/types';
 
-type DashboardStats = {
-    total_clients: number; active_clients: number; total_projects: number; active_projects: number;
-    total_messages: number; messages_this_month: number; ai_accuracy: number;
+/* Every number on this page comes from an API response. The previous page
+   was ~70% invented — revenue, uptime, automation runs, sentiment, AI cost
+   and latency, named clients — with hand-drawn sparklines even on the real
+   tiles. Metrics the backend doesn't track are listed as "not tracked yet"
+   instead of being estimated. */
+
+const STATUS_ROWS = [
+    { key: 'awaiting_human', label: 'Awaiting a human', dot: 'bg-voxly-warning' },
+    { key: 'ai_handling', label: 'AI handling', dot: 'bg-voxly-violet' },
+    { key: 'escalated', label: 'Escalated', dot: 'bg-voxly-heat' },
+    { key: 'resolved', label: 'Resolved', dot: 'bg-voxly-success' },
+] as const;
+
+const timeAgo = (ts: string) => {
+    const m = Math.floor((Date.now() - new Date(ts).getTime()) / 60000);
+    if (m < 1) return 'just now';
+    if (m < 60) return `${m}m ago`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h}h ago`;
+    return `${Math.floor(h / 24)}d ago`;
 };
 
-function Sparkline({ points, color, width = 52, height = 22 }: { points: string; color: string; width?: number; height?: number }) {
+// messages_by_day dates are UTC calendar days — label them in UTC too, or a
+// viewer west of UTC sees every bar shifted by a day.
+const weekday = (isoDate: string) =>
+    new Date(`${isoDate}T00:00:00Z`).toLocaleDateString(undefined, { weekday: 'short', timeZone: 'UTC' });
+
+function Sparkline({ values }: { values: number[] }) {
+    if (values.length < 2) return null;
+    const w = 56;
+    const h = 22;
+    const max = Math.max(...values, 1);
+    const points = values.map((v, i) => `${(i / (values.length - 1)) * w},${h - 2 - (v / max) * (h - 4)}`).join(' ');
     return (
-        <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} className="flex-none">
-            <polyline points={points} fill="none" stroke={color} strokeWidth="1.8" />
+        <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} className="flex-none" aria-hidden="true">
+            <polyline points={points} fill="none" stroke="hsl(var(--primary))" strokeWidth="1.8" strokeLinejoin="round" />
         </svg>
     );
 }
 
-const RANGES = ['7D', '30D', '90D', 'Custom'] as const;
+function Tile({
+    label,
+    value,
+    note,
+    noteTone = 'muted',
+    title,
+    href,
+    children,
+}: {
+    label: string;
+    value: string;
+    note?: React.ReactNode;
+    noteTone?: 'muted' | 'good' | 'warn';
+    title?: string;
+    href?: string;
+    children?: React.ReactNode;
+}) {
+    const toneClass = noteTone === 'good' ? 'text-voxly-success' : noteTone === 'warn' ? 'text-voxly-warning' : 'text-voxly-ink-5';
+    const body = (
+        <>
+            <div className="flex justify-between items-start gap-2">
+                <div className="min-w-0">
+                    <div className="font-mono text-[9px] font-semibold tracking-[0.04em] uppercase text-voxly-ink-5">{label}</div>
+                    <div className="font-display font-bold text-[20px] text-foreground tabular-nums">{value}</div>
+                </div>
+                {children}
+            </div>
+            {note && <div className={`text-[10.5px] mt-1 ${toneClass}`}>{note}</div>}
+        </>
+    );
+    const cls = 'block border border-border rounded-[10px] bg-card px-3.5 py-3';
+    return href ? (
+        <Link href={href} title={title} className={`${cls} hover:border-voxly-ink-4 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring`}>
+            {body}
+        </Link>
+    ) : (
+        <div title={title} className={cls}>{body}</div>
+    );
+}
+
+function Row({ dot, label, value }: { dot: string; label: React.ReactNode; value: React.ReactNode }) {
+    return (
+        <div className="flex items-center gap-2">
+            <span className={`w-[7px] h-[7px] rounded-full flex-none ${dot}`} />
+            <span className="flex-1 text-[12.5px] text-voxly-ink-6">{label}</span>
+            <span className="font-display font-bold text-[13px] text-foreground tabular-nums">{value}</span>
+        </div>
+    );
+}
+
+function Card({ title, action, children }: { title: string; action?: React.ReactNode; children: React.ReactNode }) {
+    return (
+        <section className="border border-border rounded-xl bg-card px-[18px] py-4">
+            <div className="flex items-center justify-between gap-3 mb-3">
+                <h2 className="font-mono text-[9.5px] font-bold uppercase tracking-wider text-voxly-ink-5">{title}</h2>
+                {action}
+            </div>
+            {children}
+        </section>
+    );
+}
 
 export default function AnalyticsPage() {
-
-    const { data: clients = [] } = useQuery({ ...clientsQuery, });
-    const { data: projects = [] } = useQuery({ queryKey: ['projects'], queryFn: async () => (await projectsAPI.list()).data });
-    const { data: stats } = useQuery({
+    const statsQuery = useQuery({
         queryKey: ['dashboard-stats'],
         queryFn: async () => (await dashboardAPI.stats()).data as DashboardStats,
         staleTime: 30_000,
     });
+    const { data: clients = [] } = useQuery(clientsQuery);
+    const { data: projects = [] } = useQuery({
+        queryKey: ['projects'],
+        queryFn: async () => (await projectsAPI.list()).data as Project[],
+    });
+    const { data: channelActivity = [] } = useQuery({
+        queryKey: ['channel-activity'],
+        queryFn: async () => (await channelsAPI.list()).data as ChannelActivity[],
+        staleTime: 30_000,
+    });
 
-    const activeProjects = projects.filter((p: any) => p.status === 'active').length;
+    // Real per-status conversation totals: the list endpoint filters by status
+    // server-side and returns `total`, so limit=1 is enough. Keyed under
+    // ['conversations'] so realtime invalidations elsewhere refresh them.
+    const statusTotals = useQueries({
+        queries: (['all', ...STATUS_ROWS.map((s) => s.key)] as const).map((status) => ({
+            queryKey: ['conversations', 'status-total', status],
+            queryFn: async () =>
+                (await chatAPI.conversations({ status: status === 'all' ? undefined : status, limit: 1 })).data as ConversationsListResponse,
+            staleTime: 30_000,
+        })),
+    });
+    const totalConversations = statusTotals[0].data?.total;
+    const totalFor = (i: number) => statusTotals[i + 1].data?.total;
+    const statusesLoaded = statusTotals.every((q) => q.data);
+    const withStatus = STATUS_ROWS.reduce((n, _s, i) => n + (totalFor(i) ?? 0), 0);
 
-    // Revenue, AI-cost, automation, and conversation-sentiment metrics have no
-    // backend endpoint yet (no billing-per-client, no agent-run, no automation-run,
-    // or sentiment models exist) — mock, clearly marked, matching the design.
+    const stats = statsQuery.data;
+    const now = new Date();
+
+    const newClientsThisMonth = clients.filter((c) => {
+        const d = new Date(c.created_at);
+        return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+    }).length;
+
+    const projectsSummary = useMemo(() => {
+        const byStatus = { active: 0, paused: 0, completed: 0, cancelled: 0 } as Record<Project['status'], number>;
+        let overdue = 0;
+        const today = new Date();
+        for (const p of projects) {
+            byStatus[p.status] = (byStatus[p.status] ?? 0) + 1;
+            if (p.status === 'active' && p.expected_end_date && new Date(p.expected_end_date) < today) overdue++;
+        }
+        const withRepo = projects.filter((p) => p.github_repo);
+        const synced = withRepo.filter((p) => p.github_stats?.synced_at);
+        return {
+            byStatus,
+            overdue,
+            reposLinked: withRepo.length,
+            reposSynced: synced.length,
+            commits7d: synced.reduce((n, p) => n + (p.github_stats?.commits_last_7_days ?? 0), 0),
+            openIssues: synced.reduce((n, p) => n + (p.github_stats?.open_issues ?? 0), 0),
+            openPRs: synced.reduce((n, p) => n + (p.github_stats?.pull_requests ?? 0), 0),
+        };
+    }, [projects]);
+
+    const channelSummary = useMemo(() => {
+        const per = { whatsapp: { clients: 0, today: 0 }, telegram: { clients: 0, today: 0 } } as Record<string, { clients: number; today: number }>;
+        const todayByClient = new Map<string, number>();
+        for (const a of channelActivity) {
+            const bucket = per[a.channel] ?? (per[a.channel] = { clients: 0, today: 0 });
+            bucket.clients += 1;
+            bucket.today += a.volume_today;
+            todayByClient.set(a.client_id, (todayByClient.get(a.client_id) ?? 0) + a.volume_today);
+        }
+        const names = new Map(clients.map((c) => [c.id, c.name]));
+        const mostActive = Array.from(todayByClient.entries())
+            .filter(([, n]) => n > 0)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 5)
+            .map(([id, n]) => ({ id, name: names.get(id) ?? 'Unknown client', count: n }));
+        return { per, mostActive };
+    }, [channelActivity, clients]);
+
+    const byDay = stats?.messages_by_day ?? [];
+    const weekTotal = byDay.reduce((n, d) => n + d.count, 0);
+    const dayMax = Math.max(...byDay.map((d) => d.count), 1);
+
+    // messages_delta_pct is 100.0 when last month had zero messages — a
+    // sentinel, not a growth figure — so derive the note from the raw counts.
+    let monthNote: React.ReactNode = undefined;
+    let monthTone: 'muted' | 'good' | 'warn' = 'muted';
+    if (stats) {
+        if (stats.messages_last_month === 0) {
+            monthNote = stats.messages_this_month === 0 ? 'No messages yet' : 'None last month';
+        } else {
+            const pct = Math.round(((stats.messages_this_month - stats.messages_last_month) / stats.messages_last_month) * 100);
+            monthNote = `${pct >= 0 ? '↑' : '↓'} ${Math.abs(pct)}% vs last month`;
+            monthTone = pct >= 0 ? 'good' : 'warn';
+        }
+    }
+
+    const dash = '—';
+    const awaitingTotal = totalFor(0);
+
     return (
         <div className="flex flex-col xl:flex-row gap-6 items-start">
             <div className="flex-1 min-w-0 w-full flex flex-col gap-[18px]">
-                <div className="flex items-end justify-between gap-4 flex-wrap">
-                    <div>
-                        <h1 className="font-display font-bold text-[22px] text-foreground tracking-[-0.01em]">Analytics</h1>
-                        {/* The range chips only ever rewrote this line — no query took a
-                            date range, so "Last 7 days" showed the same numbers as 90. */}
-                        <p className="text-[13px] text-voxly-ink-6 mt-[3px]">Current totals · updated just now</p>
+                <div>
+                    <h1 className="font-display font-bold text-[22px] text-foreground tracking-[-0.01em]">Analytics</h1>
+                    <p className="text-[13px] text-voxly-ink-6 mt-[3px]">Live figures from your workspace · all-time unless a period is shown</p>
+                </div>
+
+                {statsQuery.isError && (
+                    <div role="alert" className="flex items-center gap-3 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3">
+                        <AlertTriangle className="w-4 h-4 text-destructive flex-none" />
+                        <span className="flex-1 text-[12.5px] text-foreground/90">
+                            {getApiErrorMessage(statsQuery.error, 'Workspace stats couldn’t be loaded.')}
+                        </span>
+                        <Button size="sm" variant="outline" onClick={() => statsQuery.refetch()} className="h-7 gap-1.5 text-[12px]">
+                            <RefreshCw className="w-3 h-3" /> Retry
+                        </Button>
                     </div>
-                    <button disabled title="Report export isn't available yet" className="flex items-center gap-1.5 text-[13px] font-semibold text-voxly-ink-6 border border-border rounded-lg px-3.5 py-[9px] opacity-50 cursor-not-allowed">
-                        <Download className="w-3.5 h-3.5" /> Export report
-                    </button>
-                </div>
+                )}
 
-                <div className="flex items-center gap-2 flex-wrap" title="Date ranges and filters are coming soon">
-                    {RANGES.map(r => (
-                        <button
-                            key={r}
-                            disabled
-                            className="text-[11.5px] rounded-full px-[11px] py-[5px] text-voxly-ink-6 border border-border opacity-50 cursor-not-allowed">
-                            {r}
-                        </button>
-                    ))}
-                    <div className="w-px h-5 bg-border mx-1" />
-                    {['Client', 'Project', 'Agent', 'Channel'].map(f => (
-                        <span key={f} aria-disabled="true" className="text-[11.5px] text-voxly-ink-6 border border-border rounded-lg px-[11px] py-[5px] opacity-50 cursor-not-allowed">{f}</span>
-                    ))}
-                    <span className="text-[11px] text-voxly-ink-5 ml-1">Ranges &amp; filters coming soon</span>
-                </div>
-
-                <PreviewBanner>
-                    <b className="font-semibold">Preview.</b> Active Clients, Active Projects, and AI Conversations below are real. Revenue, uptime, automation, sentiment, and cost figures throughout this page have no backing endpoint yet and are illustrative.
-                </PreviewBanner>
-
-                <span className="font-display font-semibold text-[15px] text-foreground">Executive Overview</span>
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                    {[
-                        { label: 'REVENUE', value: '$48.2K', note: '↑ 6.2% vs prior 30d', color: 'text-voxly-success', points: '1,18 12,15 22,16 33,8 51,3', stroke: '#2ECC71', mock: true },
-                        { label: 'ACTIVE CLIENTS', value: String(stats?.active_clients ?? clients.length), note: '2 at churn risk', color: 'text-voxly-warning', points: '1,10 12,12 22,11 33,16 51,15', stroke: '#FFB547', mock: false },
-                        { label: 'ACTIVE PROJECTS', value: String(activeProjects), note: '3 at deadline risk', color: 'text-voxly-warning', points: '1,12 12,11 22,14 33,12 51,15', stroke: '#FFB547', mock: false },
-                        { label: 'AI CONVERSATIONS', value: (stats?.total_messages ?? 0).toLocaleString(), note: '↑ 12% vs prior 30d', color: 'text-voxly-success', points: '1,18 12,15 22,13 33,8 51,3', stroke: '#2ECC71', mock: false },
-                        { label: 'PLATFORM UPTIME', value: '99.8%', note: 'stable · 30 days', color: 'text-voxly-success', points: '1,5 12,5 22,4 33,5 51,4', stroke: '#2ECC71', mock: true },
-                        { label: 'AUTOMATION SUCCESS', value: '96.4%', note: '2 need attention', color: 'text-voxly-warning', points: '1,6 12,10 22,8 33,11 51,9', stroke: '#FFB547', mock: true },
-                    ].map(tile => (
-                        <div key={tile.label} className="border border-border rounded-[10px] bg-card px-3.5 py-3">
-                            <div className="flex justify-between items-start">
-                                <div>
-                                    <div className="font-mono text-[9px] font-semibold tracking-[0.04em] text-voxly-ink-5 flex items-center">{tile.label}{tile.mock && <PreviewMark />}</div>
-                                    <div className="font-display font-bold text-[20px] text-foreground tabular-nums">{tile.value}</div>
-                                </div>
-                                <Sparkline points={tile.points} color={tile.stroke} />
-                            </div>
-                            <div className={`text-[10.5px] mt-1 ${tile.color}`}>{tile.note}</div>
-                        </div>
-                    ))}
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3" data-testid="analytics-tiles">
+                    <Tile
+                        label="Active clients"
+                        value={stats ? String(stats.active_clients) : dash}
+                        note={stats ? `of ${stats.total_clients} · ${newClientsThisMonth} new this month` : undefined}
+                        href="/clients"
+                    />
+                    <Tile
+                        label="Active projects"
+                        value={stats ? String(stats.active_projects) : dash}
+                        note={stats ? `${stats.completed_projects} completed${projectsSummary.overdue ? ` · ${projectsSummary.overdue} overdue` : ''}` : undefined}
+                        noteTone={projectsSummary.overdue ? 'warn' : 'muted'}
+                        href="/projects"
+                    />
+                    <Tile label="Messages this month" value={stats ? stats.messages_this_month.toLocaleString() : dash} note={monthNote} noteTone={monthTone} />
+                    <Tile label="Messages · last 7 days" value={stats ? weekTotal.toLocaleString() : dash} note={stats ? `${stats.total_messages.toLocaleString()} all-time` : undefined}>
+                        <Sparkline values={byDay.map((d) => d.count)} />
+                    </Tile>
+                    <Tile
+                        label="Answered with project data"
+                        value={stats && stats.total_messages > 0 ? `${stats.ai_accuracy}%` : dash}
+                        note={stats && stats.total_messages > 0 ? 'share of all messages' : 'no messages yet'}
+                        title="Messages where Voxly found the client’s project to answer from. The rest were answered without project context."
+                    />
+                    <Tile
+                        label="Waiting on a human"
+                        value={awaitingTotal === undefined ? dash : String(awaitingTotal)}
+                        note={awaitingTotal ? 'conversations need a reply' : awaitingTotal === 0 ? 'all caught up' : undefined}
+                        noteTone={awaitingTotal ? 'warn' : 'good'}
+                        href="/messages?status=awaiting_human"
+                    />
                 </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-[1.6fr_1fr] gap-3.5">
-                    <div className="border border-border rounded-xl bg-card px-[18px] py-4">
-                        <div className="flex items-center justify-between mb-3">
-                            <span className="text-[13px] font-semibold text-foreground flex items-center">Revenue trend<PreviewMark /></span>
-                            <Link href="/clients" className="text-[11.5px]">View clients →</Link>
-                        </div>
-                        <div className="font-display font-bold text-[26px] text-foreground tabular-nums">$48.2K</div>
-                        <div className="text-[11px] text-voxly-success mb-3">↑ 6.2% vs prior period · on track for $51K</div>
-                        <svg width="100%" height="70" viewBox="0 0 400 70" preserveAspectRatio="none">
-                            <polyline points="0,58 50,54 100,56 150,42 200,44 250,28 300,30 350,14 400,8" fill="none" stroke="#2ECC71" strokeWidth="2" />
-                        </svg>
-                    </div>
-                    <div className="border border-border rounded-xl bg-card px-[18px] py-4">
-                        <div className="flex items-center justify-between mb-3">
-                            <span className="text-[13px] font-semibold text-foreground flex items-center">Client health<PreviewMark /></span>
-                            <Link href="/clients" className="text-[11.5px]">Drill in →</Link>
-                        </div>
-                        <div className="flex flex-col gap-[9px]">
-                            {[
-                                { label: 'Excellent (90+)', dot: 'bg-voxly-success', value: 22 },
-                                { label: 'Good (75-89)', dot: 'bg-voxly-success', value: 12 },
-                                { label: 'At risk (<75)', dot: 'bg-voxly-warning', value: 2 },
-                                { label: 'Inactive', dot: 'bg-voxly-ink-4', value: 1 },
-                            ].map(row => (
-                                <div key={row.label} className="flex items-center gap-2">
-                                    <span className={`w-[7px] h-[7px] rounded-full flex-none ${row.dot}`} />
-                                    <span className="flex-1 text-xs text-voxly-ink-6">{row.label}</span>
-                                    <span className="text-xs font-semibold text-foreground">{row.value}</span>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                </div>
-
-                <div className="flex items-center gap-4">
-                    <span className="font-display font-semibold text-[15px] text-foreground flex items-center">AI Performance<PreviewMark /></span>
-                    <Link href="/chat" className="text-xs">View AI Agent →</Link>
-                </div>
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                    {[
-                        { label: 'Success rate', delta: '↑ 0.3%', deltaColor: 'text-voxly-success', value: `${stats?.ai_accuracy ?? 97}%`, points: '0,20 40,22 80,16 120,17 160,10 200,8', stroke: '#2ECC71' },
-                        { label: 'Avg latency', delta: '↓ 0.2s', deltaColor: 'text-voxly-success', value: '1.7s', points: '0,10 40,12 80,16 120,18 160,22 200,24', stroke: '#2ECC71' },
-                        { label: 'Token usage', delta: '↑ 18%', deltaColor: 'text-voxly-ink-6', value: '1.2M', points: '0,26 40,23 80,20 120,15 160,11 200,6', stroke: '#7A7A82' },
-                        { label: 'Cost', delta: '↑ $12', deltaColor: 'text-voxly-warning', value: '$286', points: '0,24 40,22 80,20 120,17 160,13 200,9', stroke: '#FFB547' },
-                    ].map(m => (
-                        <div key={m.label} className="border border-border rounded-xl bg-card px-4 py-3.5">
-                            <div className="flex items-baseline justify-between mb-2">
-                                <span className="font-mono text-[9px] font-bold uppercase tracking-wider text-voxly-ink-5">{m.label}</span>
-                                <span className={`text-[10.5px] font-semibold ${m.deltaColor}`}>{m.delta}</span>
+                    <Card title="Messages · last 7 days (UTC)" action={<Link href="/messages" className="text-[11.5px] text-primary hover:underline">Conversations →</Link>}>
+                        {stats ? (
+                            <div
+                                className="flex items-end gap-2 h-[120px]"
+                                role="img"
+                                aria-label={`Messages per day: ${byDay.map((d) => `${weekday(d.date)} ${d.count}`).join(', ')}`}
+                            >
+                                {byDay.map((d) => (
+                                    <div key={d.date} className="flex-1 flex flex-col items-center justify-end gap-1 h-full min-w-0">
+                                        <span className="text-[10.5px] text-voxly-ink-6 tabular-nums">{d.count}</span>
+                                        <div
+                                            className={`w-full max-w-[36px] rounded-t-[4px] ${d.count > 0 ? 'bg-primary' : 'bg-voxly-surface-3'}`}
+                                            style={{ height: `${Math.max((d.count / dayMax) * 80, 3)}px` }}
+                                        />
+                                        <span className="font-mono text-[9.5px] text-voxly-ink-5">{weekday(d.date)}</span>
+                                    </div>
+                                ))}
                             </div>
-                            <div className="font-display font-bold text-[22px] text-foreground tabular-nums mb-2">{m.value}</div>
-                            <svg width="100%" height="32" viewBox="0 0 200 32" preserveAspectRatio="none">
-                                <polyline points={m.points} fill="none" stroke={m.stroke} strokeWidth="1.8" />
-                            </svg>
-                        </div>
-                    ))}
-                </div>
+                        ) : (
+                            <div className="h-[120px] rounded-lg bg-secondary animate-pulse" />
+                        )}
+                    </Card>
 
-                <div className="flex items-center gap-4">
-                    <span className="font-display font-semibold text-[15px] text-foreground flex items-center">Automation Metrics<PreviewMark /></span>
-                    <Link href="/automations" className="text-xs">View automations →</Link>
-                </div>
-                <div className="grid grid-cols-1 lg:grid-cols-[1fr_1.6fr] gap-3.5">
-                    <div className="border border-border rounded-xl bg-card px-[18px] py-4">
-                        <div className="font-mono text-[9.5px] font-bold uppercase tracking-wider text-voxly-ink-5 mb-2.5">Run Status (30d)</div>
-                        <div className="flex flex-col gap-[7px]">
-                            {[
-                                { label: 'Succeeded', dot: 'bg-voxly-success', value: 842 },
-                                { label: 'Retrying', dot: 'bg-voxly-warning', value: 9 },
-                                { label: 'Failed', dot: 'bg-voxly-heat', value: 22 },
-                            ].map(row => (
-                                <div key={row.label} className="flex items-center gap-2">
-                                    <span className={`w-[7px] h-[7px] rounded-full flex-none ${row.dot}`} />
-                                    <span className="flex-1 text-[12.5px] text-voxly-ink-6">{row.label}</span>
-                                    <span className="font-display font-bold text-[13px] text-foreground">{row.value}</span>
+                    <Card title="Conversation outcomes" action={<Link href="/messages" className="text-[11.5px] text-primary hover:underline">Open →</Link>}>
+                        {statusesLoaded ? (
+                            <div className="flex flex-col gap-[9px]">
+                                {STATUS_ROWS.map((s, i) => (
+                                    <Row key={s.key} dot={s.dot} label={s.label} value={totalFor(i) ?? 0} />
+                                ))}
+                                {totalConversations !== undefined && totalConversations > withStatus && (
+                                    <Row dot="bg-voxly-ink-4" label="No status yet" value={totalConversations - withStatus} />
+                                )}
+                                <div className="pt-2 mt-1 border-t border-border text-[11.5px] text-voxly-ink-5">
+                                    {totalConversations ?? 0} conversation{totalConversations === 1 ? '' : 's'} in total
                                 </div>
-                            ))}
-                        </div>
-                    </div>
-                    <div className="border border-border rounded-xl bg-card px-[18px] py-4">
-                        <div className="flex items-center justify-between mb-3">
-                            <span className="text-[13px] font-semibold text-foreground">Run volume</span>
-                            <span className="text-[11px] text-voxly-ink-5">873 runs · 96.4% success</span>
-                        </div>
-                        <svg width="100%" height="60" viewBox="0 0 360 60" preserveAspectRatio="none">
-                            <polyline points="0,40 45,44 90,30 135,34 180,20 225,26 270,14 315,18 360,10" fill="none" stroke="#FFB547" strokeWidth="2" />
-                        </svg>
-                    </div>
+                            </div>
+                        ) : statusTotals.some((q) => q.isError) ? (
+                            <p className="text-[12.5px] text-voxly-ink-5">Conversation totals couldn’t be loaded.</p>
+                        ) : (
+                            <div className="space-y-2">{[1, 2, 3, 4].map((k) => <div key={k} className="h-4 rounded bg-secondary animate-pulse" />)}</div>
+                        )}
+                    </Card>
                 </div>
 
-                <div className="flex items-center gap-4">
-                    <span className="font-display font-semibold text-[15px] text-foreground flex items-center">Conversation Analytics<PreviewMark /></span>
-                    <Link href="/messages" className="text-xs">View conversations →</Link>
-                </div>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
-                    <div className="border border-border rounded-xl bg-card px-4 py-3.5">
-                        <div className="font-mono text-[9.5px] font-bold uppercase tracking-wider text-voxly-ink-5 mb-2.5">Status (today)</div>
-                        <div className="flex flex-col gap-[7px]">
-                            {[
-                                { label: 'Resolved', dot: 'bg-voxly-success', value: 4 },
-                                { label: 'AI handling', dot: 'bg-voxly-violet', value: 2 },
-                                { label: 'Awaiting human', dot: 'bg-voxly-warning', value: 1 },
-                                { label: 'Escalated', dot: 'bg-voxly-heat', value: 1 },
-                            ].map(row => (
-                                <div key={row.label} className="flex items-center gap-2">
-                                    <span className={`w-[7px] h-[7px] rounded-full flex-none ${row.dot}`} />
-                                    <span className="flex-1 text-[12.5px] text-voxly-ink-6">{row.label}</span>
-                                    <span className="font-display font-bold text-[13px] text-foreground">{row.value}</span>
+                    <Card title="Projects">
+                        <div className="flex flex-col gap-[9px]">
+                            <Row dot="bg-voxly-success" label="Active" value={projectsSummary.byStatus.active} />
+                            <Row dot="bg-voxly-warning" label="Paused" value={projectsSummary.byStatus.paused} />
+                            <Row dot="bg-voxly-violet" label="Completed" value={projectsSummary.byStatus.completed} />
+                            <Row dot="bg-voxly-heat" label="Cancelled" value={projectsSummary.byStatus.cancelled} />
+                            {projectsSummary.overdue > 0 && (
+                                <div className="pt-2 mt-1 border-t border-border text-[11.5px] text-voxly-warning">
+                                    {projectsSummary.overdue} active project{projectsSummary.overdue === 1 ? ' is' : 's are'} past the expected end date
                                 </div>
-                            ))}
+                            )}
                         </div>
-                    </div>
-                    <div className="border border-border rounded-xl bg-card px-4 py-3.5">
-                        <div className="font-mono text-[9.5px] font-bold uppercase tracking-wider text-voxly-ink-5 mb-2.5">Sentiment (30d)</div>
-                        <div className="flex flex-col gap-[7px]">
-                            {[
-                                { label: 'Positive', dot: 'bg-voxly-success', value: '68%' },
-                                { label: 'Neutral', dot: 'bg-voxly-ink-5', value: '26%' },
-                                { label: 'Negative', dot: 'bg-voxly-heat', value: '6%' },
-                            ].map(row => (
-                                <div key={row.label} className="flex items-center gap-2">
-                                    <span className={`w-[7px] h-[7px] rounded-full flex-none ${row.dot}`} />
-                                    <span className="flex-1 text-[12.5px] text-voxly-ink-6">{row.label}</span>
-                                    <span className="font-display font-bold text-[13px] text-foreground">{row.value}</span>
-                                </div>
-                            ))}
+                    </Card>
+                    <Card title="GitHub · synced repos">
+                        {projectsSummary.reposLinked === 0 ? (
+                            <p className="text-[12.5px] text-voxly-ink-5">
+                                No repos linked yet. <Link href="/projects" className="text-primary hover:underline">Link one to a project</Link>.
+                            </p>
+                        ) : (
+                            <div className="flex flex-col gap-[9px]">
+                                <Row dot="bg-voxly-ink-4" label="Repos synced" value={`${projectsSummary.reposSynced} / ${projectsSummary.reposLinked}`} />
+                                <Row dot="bg-voxly-success" label="Commits (7d)" value={projectsSummary.commits7d} />
+                                <Row dot="bg-voxly-warning" label="Open issues" value={projectsSummary.openIssues} />
+                                <Row dot="bg-voxly-violet" label="Open PRs" value={projectsSummary.openPRs} />
+                            </div>
+                        )}
+                    </Card>
+                    <Card title="Channels" action={<Link href="/channels" className="text-[11.5px] text-primary hover:underline">Details →</Link>}>
+                        <div className="flex flex-col gap-[9px]">
+                            <Row
+                                dot={channelSummary.per.whatsapp.clients ? 'bg-voxly-success' : 'bg-voxly-ink-4'}
+                                label="WhatsApp clients"
+                                value={channelSummary.per.whatsapp.clients}
+                            />
+                            <Row
+                                dot={channelSummary.per.telegram.clients ? 'bg-voxly-success' : 'bg-voxly-ink-4'}
+                                label="Telegram clients"
+                                value={channelSummary.per.telegram.clients}
+                            />
+                            <Row
+                                dot="bg-voxly-ink-4"
+                                label="Messages today"
+                                value={channelSummary.per.whatsapp.today + channelSummary.per.telegram.today}
+                            />
                         </div>
-                    </div>
-                    <div className="border border-border rounded-xl bg-card px-4 py-3.5">
-                        <div className="font-mono text-[9.5px] font-bold uppercase tracking-wider text-voxly-ink-5 mb-2.5">Volume trend</div>
-                        <div className="font-display font-bold text-[20px] text-foreground mb-2">268 <span className="text-[11px] text-voxly-ink-5 font-normal">this week</span></div>
-                        <svg width="100%" height="30" viewBox="0 0 180 30" preserveAspectRatio="none">
-                            <polyline points="0,22 30,20 60,24 90,14 120,16 150,8 180,6" fill="none" stroke="#2ECC71" strokeWidth="1.8" />
-                        </svg>
-                    </div>
+                    </Card>
                 </div>
             </div>
 
             <div className="w-full xl:w-80 flex-none flex flex-col gap-3.5">
-                <Panel title="Top Clients by Revenue" badge={<PreviewBadge />}>
-                    {[['Fable Studio', '$6.8K'], ['Acme Co', '$4.2K'], ['Nomad Labs', '$3.1K']].map(([name, val], i) => (
-                        <div key={name} className="flex items-center gap-2 px-3 py-[7px] border-t border-border first:border-t-0">
-                            <span className="text-[11px] text-voxly-ink-5 w-3.5">{i + 1}</span>
-                            <span className="flex-1 text-xs text-foreground truncate">{name}</span>
-                            <span className="text-xs text-foreground tabular-nums">{val}</span>
+                <Panel title="Most Active Today">
+                    {channelSummary.mostActive.length === 0 ? (
+                        <PanelText>No client messages today.</PanelText>
+                    ) : (
+                        <div className="pb-1">
+                            {channelSummary.mostActive.map((c, i) => (
+                                <Link
+                                    key={c.id}
+                                    href={`/messages?client=${c.id}`}
+                                    className="flex items-center gap-2 px-3.5 py-[7px] border-t border-border first:border-t-0 hover:bg-white/[0.02] transition-colors"
+                                >
+                                    <span className="text-[11px] text-voxly-ink-5 w-3.5">{i + 1}</span>
+                                    <span className="flex-1 text-xs text-foreground truncate">{c.name}</span>
+                                    <span className="text-xs text-foreground tabular-nums">{c.count} msg{c.count === 1 ? '' : 's'}</span>
+                                </Link>
+                            ))}
                         </div>
-                    ))}
+                    )}
                 </Panel>
-                <Panel title="Cost by Agent" badge={<PreviewBadge />}>
-                    {[['Support Agent', '$142'], ['Deploy Agent', '$86'], ['Triage Agent', '$58']].map(([name, val]) => (
-                        <PanelRow key={name} label={name} value={val} />
-                    ))}
+
+                <Panel title="Recent AI Replies">
+                    {!stats || stats.recent_ai_messages.length === 0 ? (
+                        <PanelText>{stats ? 'No AI replies yet.' : 'Loading…'}</PanelText>
+                    ) : (
+                        <div className="pb-1">
+                            {stats.recent_ai_messages.slice(0, 5).map((m, i) => (
+                                <div key={`${m.timestamp}-${i}`} className="flex items-center gap-2 px-3.5 py-[7px] border-t border-border first:border-t-0">
+                                    <span className="flex-1 text-xs text-foreground truncate">{m.client_name}</span>
+                                    <span className="text-[10.5px] text-voxly-ink-5 font-mono flex-none">{m.provider}</span>
+                                    <span className="text-[11px] text-voxly-ink-5 flex-none">{timeAgo(m.timestamp)}</span>
+                                </div>
+                            ))}
+                        </div>
+                    )}
                 </Panel>
-                <Panel title="Biggest Health Changes" badge={<PreviewBadge />}>
-                    <div className="px-3.5 pb-3.5 flex flex-col gap-2">
-                        {[['Fable Studio', '↑ 6', 'text-voxly-success'], ['Studio Bloom', '↓ 9', 'text-voxly-heat'], ['Kessler & Vance', '↓ 5', 'text-voxly-heat']].map(([name, delta, color]) => (
-                            <div key={name} className="flex items-center gap-2">
-                                <span className="flex-1 text-xs text-foreground/90">{name}</span>
-                                <span className={`text-[11.5px] font-semibold ${color}`}>{delta}</span>
-                            </div>
-                        ))}
-                    </div>
+
+                <Panel title="Integrations">
+                    {stats ? (
+                        <>
+                            <PanelRow dot={stats.integrations.whatsapp ? 'bg-voxly-success' : 'bg-voxly-ink-4'} label="WhatsApp" value={stats.integrations.whatsapp ? 'connected' : 'not connected'} />
+                            <PanelRow dot={stats.integrations.telegram ? 'bg-voxly-success' : 'bg-voxly-ink-4'} label="Telegram" value={stats.integrations.telegram ? 'connected' : 'not connected'} />
+                            <PanelRow dot={stats.integrations.github ? 'bg-voxly-success' : 'bg-voxly-ink-4'} label="GitHub" value={stats.integrations.github ? 'connected' : 'not connected'} />
+                            <PanelRow
+                                dot={stats.integrations.ai_provider && stats.integrations.ai_provider !== 'none' ? 'bg-voxly-success' : 'bg-voxly-ink-4'}
+                                label="AI provider"
+                                value={stats.integrations.ai_provider && stats.integrations.ai_provider !== 'none' ? stats.integrations.ai_provider : 'not set'}
+                            />
+                        </>
+                    ) : (
+                        <PanelText>Loading…</PanelText>
+                    )}
                 </Panel>
-                <Panel title="Export Report" defaultOpen={false}>
+
+                <Panel title="Not Tracked Yet" defaultOpen={false}>
                     <PanelText>
-                        PDF and CSV export are coming soon. Your raw data can be exported today from{' '}
+                        Revenue, AI cost, response latency and conversation sentiment aren’t recorded by the backend yet, so they aren’t estimated here.
+                    </PanelText>
+                </Panel>
+
+                <Panel title="Export" defaultOpen={false}>
+                    <PanelText>
+                        Report export is coming soon. Your raw data can be exported today from{' '}
                         <Link href="/settings/danger-zone" className="text-primary hover:underline">Settings → Export data</Link>.
                     </PanelText>
                 </Panel>
