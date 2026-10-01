@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { Client, ConversationDetail, InboxPage, MessagePage, ThreadMessage } from '@/types';
+import type { ChatLink, Client, ConversationDetail, InboxPage, MessagePage, ThreadMessage } from '@/types';
 
 const api = axios.create({
     baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000',
@@ -36,7 +36,11 @@ api.interceptors.response.use(
                 // Don't auto-redirect from super admin — the page handles its own auth flow
                 const isSuperAdminRoute = pathname.startsWith('/voxly-admin');
                 const isPublicAuthRoute = PUBLIC_AUTH_PATHS.some((p) => pathname.startsWith(p));
-                if (!isSuperAdminRoute && !isPublicAuthRoute) {
+                // A client's chat (/c, /c/<link>) is not an agency page: a stale agency
+                // login in the same browser must never bounce the client to /login.
+                // (Exact match — '/clients' also starts with '/c'.)
+                const isClientChat = pathname === '/c' || pathname.startsWith('/c/');
+                if (!isSuperAdminRoute && !isPublicAuthRoute && !isClientChat) {
                     localStorage.removeItem('access_token');
                     window.location.href = '/login';
                 }
@@ -268,6 +272,14 @@ export const conversationsAPI = {
         api.post<ThreadMessage>(`/api/v1/conversations/${clientId}/messages`, data),
     retry: (clientId: string, messageId: string) =>
         api.post<ThreadMessage>(`/api/v1/conversations/${clientId}/messages/${messageId}/retry`),
+};
+
+// ─── A client's personal Voxly chat link (agency side) ───
+export const chatLinkAPI = {
+    get: (clientId: string) => api.get<ChatLink>(`/api/v1/clients/${clientId}/chat-link`),
+    /** Creates the link — or regenerates it, which signs out whoever used the old one. */
+    create: (clientId: string) => api.post<ChatLink>(`/api/v1/clients/${clientId}/chat-link`),
+    revoke: (clientId: string) => api.delete(`/api/v1/clients/${clientId}/chat-link`),
 };
 
 // ─── AI assistant (agency owner ↔ Voxly) ───

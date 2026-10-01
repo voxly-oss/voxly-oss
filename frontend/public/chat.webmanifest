@@ -1,0 +1,15 @@
+{
+    "name": "Voxly chat",
+    "short_name": "Chat",
+    "description": "Your private chat with your agency.",
+    "id": "/c",
+    "start_url": "/c",
+    "scope": "/c",
+    "display": "standalone",
+    "orientation": "portrait",
+    "background_color": "#0c0c0f",
+    "theme_color": "#0c0c0f",
+    "icons": [
+        { "src": "/orb-icon.png", "sizes": "241x241", "type": "image/png", "purpose": "any" }
+    ]
+}

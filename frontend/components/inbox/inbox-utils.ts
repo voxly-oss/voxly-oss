@@ -1,4 +1,4 @@
-import type { ConversationStatus, MessagePage, ThreadMessage } from '@/types';
+import type { ConversationStatus, ThreadMessage } from '@/types';
 
 /* ─── Conversation status — the backend's own enum (schemas/conversation.py) ─── */
 
@@ -30,7 +30,7 @@ const HUMAN_OWNED: ConversationStatus[] = ['awaiting_human', 'escalated'];
 export const isAiPaused = (status: ConversationStatus | null, updatedByUserId: string | null | undefined) =>
     !!status && HUMAN_OWNED.includes(status) && !!updatedByUserId;
 
-export const CHANNEL_LABEL: Record<string, string> = { whatsapp: 'WhatsApp', telegram: 'Telegram' };
+export const CHANNEL_LABEL: Record<string, string> = { whatsapp: 'WhatsApp', telegram: 'Telegram', voxly: 'Voxly chat' };
 export const channelLabel = (channel: string | null | undefined) =>
     channel ? CHANNEL_LABEL[channel] ?? channel.charAt(0).toUpperCase() + channel.slice(1) : '';
 
@@ -104,10 +104,13 @@ export function sameDay(a: string | null | undefined, b: string | null | undefin
     return !!da && !!db && startOfDay(da) === startOfDay(db);
 }
 
-/* ─── Thread cache ─── */
+/* ─── Thread cache (shared by the agency inbox and the client's chat) ─── */
 
-export interface ThreadPages {
-    pages: MessagePage[];
+/** Anything with an id, a delivery status and a timestamp. */
+type CachedMessage = Pick<ThreadMessage, 'id' | 'status' | 'created_at'>;
+
+export interface ThreadPages<T extends CachedMessage = ThreadMessage> {
+    pages: { messages: T[]; has_more: boolean }[];
     pageParams: (string | undefined)[];
 }
 
@@ -115,14 +118,16 @@ export interface ThreadPages {
  *  queued because of a late, out-of-order event. Retry forces it explicitly. */
 const STATUS_RANK: Record<string, number> = { queued: 0, received: 1, sent: 1, failed: 1 };
 
-const time = (m: ThreadMessage) => (m.created_at ? Date.parse(m.created_at) : Number.MAX_SAFE_INTEGER);
-const byTime = (a: ThreadMessage, b: ThreadMessage) => time(a) - time(b) || a.id.localeCompare(b.id);
+const time = (m: CachedMessage) => (m.created_at ? Date.parse(m.created_at) : Number.MAX_SAFE_INTEGER);
+const byTime = (a: CachedMessage, b: CachedMessage) => time(a) - time(b) || a.id.localeCompare(b.id);
 
 /**
  * Insert or update one message in the infinite-query cache. pages[0] is the
  * newest page, so an unknown message is appended there.
  */
-export function upsertThreadMessage(data: ThreadPages | undefined, message: ThreadMessage, force = false): ThreadPages | undefined {
+export function upsertThreadMessage<T extends CachedMessage = ThreadMessage>(
+    data: ThreadPages<T> | undefined, message: T, force = false,
+): ThreadPages<T> | undefined {
     if (!data) return data;
     let found = false;
     const pages = data.pages.map((page) => {
@@ -142,13 +147,15 @@ export function upsertThreadMessage(data: ThreadPages | undefined, message: Thre
     return { ...data, pages };
 }
 
-export function removeThreadMessage(data: ThreadPages | undefined, id: string): ThreadPages | undefined {
+export function removeThreadMessage<T extends CachedMessage = ThreadMessage>(
+    data: ThreadPages<T> | undefined, id: string,
+): ThreadPages<T> | undefined {
     if (!data) return data;
     return { ...data, pages: data.pages.map((p) => ({ ...p, messages: p.messages.filter((m) => m.id !== id) })) };
 }
 
 /** Oldest → newest across every loaded page. */
-export function flattenThread(data: ThreadPages | undefined): ThreadMessage[] {
+export function flattenThread<T extends CachedMessage = ThreadMessage>(data: ThreadPages<T> | undefined): T[] {
     if (!data) return [];
     return data.pages.slice().reverse().flatMap((p) => p.messages);
 }
