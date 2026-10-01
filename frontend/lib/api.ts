@@ -1,4 +1,5 @@
 import axios from 'axios';
+import type { Client } from '@/types';
 
 const api = axios.create({
     baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000',
@@ -123,9 +124,25 @@ export const authAPI = {
 };
 
 // ─── Clients API ───
+const CLIENTS_PAGE_SIZE = 100; // backend MAX_LIST_LIMIT (api/v1/clients.py)
+
 export const clientsAPI = {
     list: (params?: { skip?: number; limit?: number }) =>
         api.get('/api/v1/clients', { params }),
+    /** Every client. The endpoint caps a page at 100, so a single list() call
+     *  silently dropped client #101 onwards from every page that used it. */
+    listAll: async (): Promise<Client[]> => {
+        const all: Client[] = [];
+        // Hard stop at 50 pages so a misbehaving API can't loop forever.
+        for (let page = 0; page < 50; page++) {
+            const res = await api.get<Client[]>('/api/v1/clients', {
+                params: { skip: page * CLIENTS_PAGE_SIZE, limit: CLIENTS_PAGE_SIZE },
+            });
+            all.push(...res.data);
+            if (res.data.length < CLIENTS_PAGE_SIZE) break;
+        }
+        return all;
+    },
     create: (data: {
         name: string;
         phone: string;

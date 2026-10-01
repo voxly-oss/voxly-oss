@@ -7,7 +7,8 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Loader2 } from 'lucide-react';
-import { clientsAPI, projectsAPI, getApiErrorMessage } from '@/lib/api';
+import { projectsAPI, getApiErrorMessage } from '@/lib/api';
+import { clientsQuery } from '@/lib/queries';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -24,7 +25,7 @@ import {
 import FieldError from '@/components/FieldError';
 import { useToast } from '@/hooks/use-toast';
 import { normalizeGithubRepo, nullIfBlank, undefinedIfBlank } from '@/lib/utils';
-import type { Client, Project } from '@/types';
+import type { Project } from '@/types';
 
 const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const STATUSES = ['active', 'paused', 'completed', 'cancelled'] as const;
@@ -100,8 +101,7 @@ export default function ProjectFormDialog({
     const needsClientPicker = !clientId && !isEdit;
 
     const { data: clients = [], isLoading: clientsLoading } = useQuery({
-        queryKey: ['clients'],
-        queryFn: async () => (await clientsAPI.list()).data as Client[],
+        ...clientsQuery,
         enabled: open && needsClientPicker,
     });
 
@@ -185,7 +185,7 @@ export default function ProjectFormDialog({
                         <p className="text-[13px] text-foreground font-medium mb-1">You need a client first</p>
                         <p className="text-xs text-voxly-ink-5 mb-4">Every project belongs to a client.</p>
                         <Button asChild>
-                            <Link href="/clients/new" onClick={() => onOpenChange(false)}>Add a client</Link>
+                            <Link href="/clients?new=1" onClick={() => onOpenChange(false)}>Add a client</Link>
                         </Button>
                     </div>
                 ) : (

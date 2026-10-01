@@ -1,10 +1,14 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { clientsAPI, projectsAPI, channelsAPI, getApiErrorMessage } from '@/lib/api';
+import { Suspense, useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { useQuery } from '@tanstack/react-query';
+import { projectsAPI, channelsAPI } from '@/lib/api';
+import { clientsQuery } from '@/lib/queries';
+import { useDeleteClient, useSetClientActive } from '@/hooks/useClientMutations';
 import { Button } from '@/components/ui/button';
 import ConfirmDialog from '@/components/ConfirmDialog';
+import ClientFormDialog from '@/components/ClientFormDialog';
 import {
     DropdownMenu,
     DropdownMenuCheckboxItem,
@@ -13,8 +17,10 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { useToast } from '@/hooks/use-toast';
-import { Plus, Search, MoreVertical, Pencil, Trash2, Users, Loader2, Filter, ChevronLeft, ChevronRight, MessageSquare } from 'lucide-react';
+import {
+    Plus, Search, MoreVertical, Pencil, Trash2, Users, Loader2, Filter,
+    ChevronLeft, ChevronRight, MessageSquare, ArrowUpRight, PauseCircle, PlayCircle,
+} from 'lucide-react';
 import Link from 'next/link';
 import { formatPhone, getInitials } from '@/lib/utils';
 import type { Client, Project, ChannelActivity } from '@/types';
@@ -59,20 +65,41 @@ interface ClientRow {
     lastMessageAt: string | null;
 }
 
+// useSearchParams (for /clients?new=1) needs a Suspense boundary or
+// `next build` fails the static prerender of this route.
 export default function ClientsListPage() {
+    return (
+        <Suspense fallback={<div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>}>
+            <ClientsList />
+        </Suspense>
+    );
+}
+
+function ClientsList() {
+    const searchParams = useSearchParams();
     const [searchQuery, setSearchQuery] = useState('');
     const [statusFilter, setStatusFilter] = useState<typeof STATUS_FILTERS[number]>('All');
     const [channelFilter, setChannelFilter] = useState<Set<string>>(new Set());
     const [page, setPage] = useState(1);
-    const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+    const [createOpen, setCreateOpen] = useState(false);
+    const [editingClient, setEditingClient] = useState<Client | null>(null);
+    const [clientToDeactivate, setClientToDeactivate] = useState<Client | null>(null);
     const [clientToDelete, setClientToDelete] = useState<Client | null>(null);
-    const { toast } = useToast();
-    const queryClient = useQueryClient();
 
-    const { data: clients = [], isLoading } = useQuery({
-        queryKey: ['clients'],
-        queryFn: async () => (await clientsAPI.list()).data as Client[],
-    });
+    // "Add a client" anywhere in the app links to /clients?new=1 — derived
+    // rather than copied into state, so it also works when we're already here.
+    const wantsCreate = searchParams.get('new') === '1';
+    const createDialogOpen = createOpen || wantsCreate;
+    const setCreateDialogOpen = (open: boolean) => {
+        setCreateOpen(open);
+        // Native replaceState, not router.replace: Next syncs it into
+        // useSearchParams without a navigation. In production builds
+        // router.replace('/clients') from /clients?new=1 never committed, so
+        // the param stuck and the dialog could not be closed.
+        if (!open && wantsCreate) window.history.replaceState(null, '', '/clients');
+    };
+
+    const { data: clients = [], isLoading } = useQuery(clientsQuery);
 
     const { data: projects = [] } = useQuery({
         queryKey: ['projects'],
@@ -85,20 +112,8 @@ export default function ClientsListPage() {
         staleTime: 30_000,
     });
 
-    const deleteMutation = useMutation({
-        mutationFn: (id: string) => clientsAPI.delete(id),
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['clients'] });
-            queryClient.invalidateQueries({ queryKey: ['projects'] });
-            queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });
-            toast({ title: 'Client deleted', description: 'The client has been removed.' });
-            setDeleteDialogOpen(false);
-            setClientToDelete(null);
-        },
-        onError: (err) => {
-            toast({ variant: 'destructive', title: 'Couldn’t delete client', description: getApiErrorMessage(err, 'Please try again.') });
-        },
-    });
+    const setActive = useSetClientActive();
+    const deleteMutation = useDeleteClient({ onDeleted: () => setClientToDelete(null) });
 
     const projectCountByClient = useMemo(() => {
         const map = new Map<string, number>();
@@ -162,6 +177,7 @@ export default function ClientsListPage() {
 
     const resetToFirstPage = () => setPage(1);
     const isFiltering = !!query || statusFilter !== 'All' || channelFilter.size > 0;
+    const deleteProjectCount = clientToDelete ? projectCountByClient.get(clientToDelete.id) ?? 0 : 0;
 
     return (
         <div className="flex flex-col xl:flex-row gap-6 items-start">
@@ -178,10 +194,8 @@ export default function ClientsListPage() {
                                 : clients.length > 0 ? ' · no conversations yet' : ''}
                         </p>
                     </div>
-                    <Button asChild className="font-semibold text-[13px] rounded-lg px-4 py-[9px] h-auto gap-[7px]">
-                        <Link href="/clients/new">
-                            <Plus className="w-[15px] h-[15px]" /> New client
-                        </Link>
+                    <Button onClick={() => setCreateDialogOpen(true)} className="font-semibold text-[13px] rounded-lg px-4 py-[9px] h-auto gap-[7px]">
+                        <Plus className="w-[15px] h-[15px]" /> New client
                     </Button>
                 </div>
 
@@ -289,10 +303,12 @@ export default function ClientsListPage() {
                             </Button>
                         </div>
                     ) : filtered.length === 0 ? (
-                        <EmptyState icon={Users} title="No clients yet" description="Add your first client — Voxly will answer them on WhatsApp and Telegram." href="/clients/new" label="Add client" />
+                        <EmptyState icon={Users} title="No clients yet" description="Add your first client — Voxly will answer them on WhatsApp and Telegram." href="/clients?new=1" label="Add client" />
                     ) : (
                         <div className="overflow-x-auto">
-                        <div className="min-w-[720px]">
+                        {/* 600px fits the main column beside the right rail at xl
+                            (1280px) — 720 clipped "Last message" on laptops. */}
+                        <div className="min-w-[600px]">
                             <div className={`${GRID_COLS} px-4 py-2.5 font-mono text-[10px] font-semibold tracking-[0.04em] uppercase text-voxly-ink-5 border-b border-border`}>
                                 <div>Client</div><div>Status</div><div>Channels</div><div>Projects</div><div>Last message</div><div />
                             </div>
@@ -300,6 +316,7 @@ export default function ClientsListPage() {
                                 {paged.map(({ client, channels, projectCount, lastMessageAt }, index) => (
                                     <motion.div
                                         key={client.id}
+                                        data-testid="client-row"
                                         initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, x: -8 }}
                                         transition={{ duration: 0.25, delay: index * 0.03 }}
                                         className={`${GRID_COLS} px-4 py-3 items-center border-b border-border last:border-b-0 hover:bg-white/[0.02] transition-colors group`}
@@ -340,8 +357,11 @@ export default function ClientsListPage() {
                                             <DropdownMenuContent align="end">
                                                 <DropdownMenuItem asChild>
                                                     <Link href={`/clients/${client.id}`}>
-                                                        <Pencil className="w-4 h-4 mr-2" /> Open &amp; edit
+                                                        <ArrowUpRight className="w-4 h-4 mr-2" /> Open
                                                     </Link>
+                                                </DropdownMenuItem>
+                                                <DropdownMenuItem onSelect={() => setEditingClient(client)}>
+                                                    <Pencil className="w-4 h-4 mr-2" /> Edit
                                                 </DropdownMenuItem>
                                                 <DropdownMenuItem asChild>
                                                     <Link href={`/messages?client=${client.id}`}>
@@ -349,9 +369,18 @@ export default function ClientsListPage() {
                                                     </Link>
                                                 </DropdownMenuItem>
                                                 <DropdownMenuSeparator />
+                                                {client.is_active ? (
+                                                    <DropdownMenuItem onSelect={() => setClientToDeactivate(client)}>
+                                                        <PauseCircle className="w-4 h-4 mr-2" /> Mark inactive
+                                                    </DropdownMenuItem>
+                                                ) : (
+                                                    <DropdownMenuItem onSelect={() => setActive.mutate({ client, active: true })}>
+                                                        <PlayCircle className="w-4 h-4 mr-2" /> Reactivate
+                                                    </DropdownMenuItem>
+                                                )}
                                                 <DropdownMenuItem
                                                     className="text-voxly-heat focus:bg-voxly-heat-soft focus:text-voxly-heat"
-                                                    onSelect={() => { setClientToDelete(client); setDeleteDialogOpen(true); }}
+                                                    onSelect={() => setClientToDelete(client)}
                                                 >
                                                     <Trash2 className="w-4 h-4 mr-2" /> Delete
                                                 </DropdownMenuItem>
@@ -429,23 +458,44 @@ export default function ClientsListPage() {
                 </Panel>
             </div>
 
+            <ClientFormDialog open={createDialogOpen} onOpenChange={setCreateDialogOpen} />
+            <ClientFormDialog
+                open={!!editingClient}
+                onOpenChange={(open) => { if (!open) setEditingClient(null); }}
+                client={editingClient}
+            />
+
             <ConfirmDialog
-                open={deleteDialogOpen}
-                onOpenChange={setDeleteDialogOpen}
-                title="Delete client?"
-                description={(() => {
-                    const n = clientToDelete ? projectCountByClient.get(clientToDelete.id) ?? 0 : 0;
-                    return (
-                        <>
-                            &ldquo;{clientToDelete?.name}&rdquo; will be deleted
-                            {n > 0 ? <>, along with {n} {n === 1 ? 'project' : 'projects'} and their milestones</> : null}.
-                            This can&rsquo;t be undone.
-                        </>
+                open={!!clientToDeactivate}
+                onOpenChange={(open) => { if (!open) setClientToDeactivate(null); }}
+                title={`Mark ${clientToDeactivate?.name ?? 'client'} inactive?`}
+                description="Voxly will stop replying to their WhatsApp and Telegram messages until you reactivate them. Projects and conversation history are kept."
+                confirmLabel="Mark inactive"
+                destructive={false}
+                pending={setActive.isPending}
+                onConfirm={() => {
+                    if (!clientToDeactivate) return;
+                    setActive.mutate(
+                        { client: clientToDeactivate, active: false },
+                        { onSuccess: () => setClientToDeactivate(null) },
                     );
-                })()}
+                }}
+            />
+
+            <ConfirmDialog
+                open={!!clientToDelete}
+                onOpenChange={(open) => { if (!open) setClientToDelete(null); }}
+                title="Delete client?"
+                description={
+                    <>
+                        &ldquo;{clientToDelete?.name}&rdquo; will be deleted
+                        {deleteProjectCount > 0 ? <>, along with {deleteProjectCount} {deleteProjectCount === 1 ? 'project' : 'projects'} and their milestones</> : null}.
+                        This can&rsquo;t be undone.
+                    </>
+                }
                 confirmLabel="Delete client"
                 pending={deleteMutation.isPending}
-                onConfirm={() => clientToDelete && deleteMutation.mutate(clientToDelete.id)}
+                onConfirm={() => clientToDelete && deleteMutation.mutate(clientToDelete)}
             />
         </div>
     );

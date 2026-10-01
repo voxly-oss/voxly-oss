@@ -3,14 +3,15 @@
 import { useAuth } from '@/hooks/useAuth';
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
-import { channelsAPI, clientsAPI, dashboardAPI, projectsAPI } from '@/lib/api';
+import { channelsAPI, dashboardAPI, projectsAPI } from '@/lib/api';
+import { clientsQuery } from '@/lib/queries';
 import { Button } from '@/components/ui/button';
 import { getInitials } from '@/lib/utils';
 import { Code2, MessageSquare, Mail, Send, Sparkles } from 'lucide-react';
 import SettingsShell from '@/components/SettingsShell';
 import { Panel, PanelRow, PanelText } from '@/components/SidePanel';
 import { PreviewBanner, PreviewMark } from '@/components/PreviewBadge';
-import type { ChannelActivity, Client, Project } from '@/types';
+import type { ChannelActivity, Project } from '@/types';
 
 /**
  * An `organizations` table, `memberships`, `roles`, and `invitations` all exist
@@ -27,8 +28,7 @@ export default function OrganizationSettingsPage() {
     const { user } = useAuth();
 
     const { data: clients = [] } = useQuery({
-        queryKey: ['clients'],
-        queryFn: async () => (await clientsAPI.list()).data as Client[],
+        ...clientsQuery,
     });
     const { data: projects = [] } = useQuery({
         queryKey: ['projects'],

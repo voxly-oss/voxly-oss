@@ -1,15 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import * as z from 'zod';
 import { clientsAPI, projectsAPI, getApiErrorMessage } from '@/lib/api';
+import { useDeleteClient, useSetClientActive } from '@/hooks/useClientMutations';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -29,8 +25,6 @@ import {
     FolderGit2,
     ExternalLink,
     Pencil,
-    Save,
-    X,
     Clock,
     ArrowUpRight,
     GitBranch,
@@ -38,41 +32,18 @@ import {
     MessageSquare,
     MoreVertical,
     Trash2,
+    PauseCircle,
+    PlayCircle,
 } from 'lucide-react';
 import Link from 'next/link';
-import { formatDate, formatPhone, getInitials, nullIfBlank } from '@/lib/utils';
+import { formatDate, formatPhone, getInitials } from '@/lib/utils';
 import type { Client, Project } from '@/types';
 import StatusBadge from '@/components/StatusBadge';
 import EmptyState from '@/components/EmptyState';
-import FieldError from '@/components/FieldError';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import ProjectFormDialog from '@/components/ProjectFormDialog';
 import FollowUpDialog from '@/components/FollowUpDialog';
-
-// Mirrors the backend's phonenumbers.is_possible_number check closely enough
-// to catch typos early, without rejecting the spaces/dashes people paste —
-// the server normalizes to E.164 either way.
-const PHONE_RE = /^\+?[\d\s\-().]+$/;
-
-const editClientSchema = z.object({
-    name: z
-        .string()
-        .refine((v) => v.trim().length > 0, 'Name is required')
-        .refine((v) => v.trim().length <= 255, 'Keep the name under 255 characters'),
-    phone: z
-        .string()
-        .refine(
-            (v) => PHONE_RE.test(v.trim()) && v.replace(/\D/g, '').length >= 7,
-            'Enter a phone number with country code, e.g. +91 97290 41423',
-        ),
-    email: z.string().refine((v) => !v.trim() || z.email().safeParse(v.trim()).success, 'Enter a valid email address'),
-    company: z.string().refine((v) => v.trim().length <= 255, 'Keep the company under 255 characters'),
-    telegram_chat_id: z.string().refine((v) => !v.trim() || /^-?\d+$/.test(v.trim()), 'Telegram chat IDs are numbers only'),
-});
-
-type EditClientFormData = z.infer<typeof editClientSchema>;
-
-const LABEL = 'text-[12.5px] font-medium text-voxly-ink-6';
+import ClientFormDialog from '@/components/ClientFormDialog';
 
 function DetailTile({ icon: Icon, label, children }: { icon: React.ElementType; label: string; children: React.ReactNode }) {
     return (
@@ -125,11 +96,14 @@ function ProjectProgress({ project }: { project: Project }) {
 
 export default function ClientDetailPage() {
     const params = useParams();
+    const router = useRouter();
     const { toast } = useToast();
     const queryClient = useQueryClient();
     const clientId = params.id as string;
 
-    const [editMode, setEditMode] = useState(false);
+    const [editOpen, setEditOpen] = useState(false);
+    const [deactivateOpen, setDeactivateOpen] = useState(false);
+    const [deleteOpen, setDeleteOpen] = useState(false);
     const [projectDialogOpen, setProjectDialogOpen] = useState(false);
     const [editingProject, setEditingProject] = useState<Project | null>(null);
     const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
@@ -145,42 +119,8 @@ export default function ClientDetailPage() {
         queryFn: async () => (await projectsAPI.list({ client_id: clientId })).data as Project[],
     });
 
-    const editForm = useForm<EditClientFormData>({
-        resolver: zodResolver(editClientSchema),
-        values: client
-            ? {
-                name: client.name,
-                phone: client.phone,
-                email: client.email || '',
-                company: client.company || '',
-                telegram_chat_id: client.telegram_chat_id || '',
-            }
-            : undefined,
-    });
-    const editErrors = editForm.formState.errors;
-
-    const updateClientMutation = useMutation({
-        // Blank optional fields go as null so clearing one actually clears it
-        // ("" was rejected by the API's EmailStr → every client without an
-        // email failed to save).
-        mutationFn: (data: EditClientFormData) =>
-            clientsAPI.update(clientId, {
-                name: data.name.trim(),
-                phone: data.phone.trim(),
-                email: nullIfBlank(data.email),
-                company: nullIfBlank(data.company),
-                telegram_chat_id: nullIfBlank(data.telegram_chat_id),
-            }),
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['client', clientId] });
-            queryClient.invalidateQueries({ queryKey: ['clients'] });
-            toast({ title: 'Client updated' });
-            setEditMode(false);
-        },
-        onError: (err) => {
-            toast({ variant: 'destructive', title: 'Couldn’t update client', description: getApiErrorMessage(err, 'Please try again.') });
-        },
-    });
+    const setActive = useSetClientActive();
+    const deleteClient = useDeleteClient({ onDeleted: () => router.push('/clients') });
 
     const deleteProjectMutation = useMutation({
         mutationFn: (id: string) => projectsAPI.delete(id),
@@ -203,10 +143,6 @@ export default function ClientDetailPage() {
         setEditingProject(project);
         setProjectDialogOpen(true);
     };
-    const cancelEdit = () => {
-        editForm.reset();
-        setEditMode(false);
-    };
 
     if (clientLoading) {
         return (
@@ -223,8 +159,6 @@ export default function ClientDetailPage() {
             </div>
         );
     }
-
-    const describedBy = (field: keyof EditClientFormData) => (editErrors[field] ? `client-${field}-error` : undefined);
 
     return (
         <div className="flex flex-col gap-[18px]">
@@ -249,7 +183,10 @@ export default function ClientDetailPage() {
                                 <h1 className="font-display font-bold text-[22px] text-foreground tracking-[-0.01em] truncate">{client.name}</h1>
                                 <StatusBadge status={client.is_active ? 'active' : 'inactive'} />
                             </div>
-                            <p className="text-[12.5px] text-voxly-ink-5 mt-0.5">Added {formatDate(client.created_at)}</p>
+                            <p className="text-[12.5px] text-voxly-ink-5 mt-0.5">
+                                Added {formatDate(client.created_at)}
+                                {!client.is_active && ' · Voxly isn’t replying to this client'}
+                            </p>
                         </div>
                     </div>
                     <div className="flex items-center gap-2 flex-wrap">
@@ -257,7 +194,7 @@ export default function ClientDetailPage() {
                             variant="outline"
                             size="sm"
                             onClick={() => setFollowUpOpen(true)}
-                            disabled={!client.phone || editMode}
+                            disabled={!client.phone}
                             title={client.phone ? 'Send a WhatsApp message to this client' : 'This client has no phone number on file'}
                             className="gap-2"
                         >
@@ -270,96 +207,57 @@ export default function ClientDetailPage() {
                                 Conversation
                             </Link>
                         </Button>
-                        {!editMode && (
-                            <Button size="sm" onClick={() => setEditMode(true)} className="gap-2 font-semibold">
-                                <Pencil className="w-3.5 h-3.5" />
-                                Edit client
-                            </Button>
-                        )}
+                        <Button size="sm" onClick={() => setEditOpen(true)} className="gap-2 font-semibold">
+                            <Pencil className="w-3.5 h-3.5" />
+                            Edit client
+                        </Button>
+                        <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                                <Button variant="outline" size="sm" className="w-9 px-0" aria-label={`More actions for ${client.name}`}>
+                                    <MoreVertical className="w-4 h-4" />
+                                </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                                {client.is_active ? (
+                                    <DropdownMenuItem onSelect={() => setDeactivateOpen(true)}>
+                                        <PauseCircle className="w-4 h-4 mr-2" /> Mark inactive
+                                    </DropdownMenuItem>
+                                ) : (
+                                    <DropdownMenuItem onSelect={() => setActive.mutate({ client, active: true })}>
+                                        <PlayCircle className="w-4 h-4 mr-2" /> Reactivate
+                                    </DropdownMenuItem>
+                                )}
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                    className="text-voxly-heat focus:bg-voxly-heat-soft focus:text-voxly-heat"
+                                    onSelect={() => setDeleteOpen(true)}
+                                >
+                                    <Trash2 className="w-4 h-4 mr-2" /> Delete client
+                                </DropdownMenuItem>
+                            </DropdownMenuContent>
+                        </DropdownMenu>
                     </div>
                 </div>
 
-                <div className="p-5">
-                    {editMode ? (
-                        <form
-                            onSubmit={editForm.handleSubmit((data) => updateClientMutation.mutate(data))}
-                            className="space-y-5"
-                            noValidate
-                        >
-                            <div className="grid md:grid-cols-2 gap-4">
-                                <div className="space-y-1.5">
-                                    <Label htmlFor="client-name" className={LABEL}>Name *</Label>
-                                    <Input id="client-name" autoFocus aria-invalid={!!editErrors.name} aria-describedby={describedBy('name')} {...editForm.register('name')} />
-                                    <FieldError id="client-name-error" message={editErrors.name?.message} />
-                                </div>
-                                <div className="space-y-1.5">
-                                    <Label htmlFor="client-phone" className={LABEL}>Phone *</Label>
-                                    <Input id="client-phone" type="tel" inputMode="tel" placeholder="+91 97290 41423" aria-invalid={!!editErrors.phone} aria-describedby={describedBy('phone')} {...editForm.register('phone')} />
-                                    <FieldError id="client-phone-error" message={editErrors.phone?.message} />
-                                </div>
-                                <div className="space-y-1.5">
-                                    <Label htmlFor="client-email" className={LABEL}>Email</Label>
-                                    <Input id="client-email" type="email" placeholder="name@company.com" aria-invalid={!!editErrors.email} aria-describedby={describedBy('email')} {...editForm.register('email')} />
-                                    <FieldError id="client-email-error" message={editErrors.email?.message} />
-                                </div>
-                                <div className="space-y-1.5">
-                                    <Label htmlFor="client-company" className={LABEL}>Company</Label>
-                                    <Input id="client-company" aria-invalid={!!editErrors.company} aria-describedby={describedBy('company')} {...editForm.register('company')} />
-                                    <FieldError id="client-company-error" message={editErrors.company?.message} />
-                                </div>
-                                <div className="space-y-1.5">
-                                    <Label htmlFor="client-telegram_chat_id" className={LABEL}>Telegram chat ID</Label>
-                                    <Input
-                                        id="client-telegram_chat_id"
-                                        placeholder="e.g. 123456789"
-                                        inputMode="numeric"
-                                        className="font-mono"
-                                        aria-invalid={!!editErrors.telegram_chat_id}
-                                        aria-describedby={describedBy('telegram_chat_id') ?? 'client-telegram-hint'}
-                                        {...editForm.register('telegram_chat_id')}
-                                    />
-                                    {editErrors.telegram_chat_id ? (
-                                        <FieldError id="client-telegram_chat_id-error" message={editErrors.telegram_chat_id.message} />
-                                    ) : (
-                                        <p id="client-telegram-hint" className="text-[11.5px] text-voxly-ink-5">
-                                            The client gets this by messaging your Voxly bot with /start on Telegram.
-                                        </p>
-                                    )}
-                                </div>
-                            </div>
-                            <div className="flex justify-end gap-2">
-                                <Button type="button" variant="outline" onClick={cancelEdit} disabled={updateClientMutation.isPending} className="gap-2">
-                                    <X className="w-4 h-4" />
-                                    Cancel
-                                </Button>
-                                <Button type="submit" disabled={updateClientMutation.isPending} className="gap-2 font-semibold">
-                                    {updateClientMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                                    Save changes
-                                </Button>
-                            </div>
-                        </form>
-                    ) : (
-                        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                            <DetailTile icon={Phone} label="Phone">{formatPhone(client.phone)}</DetailTile>
-                            <DetailTile icon={Mail} label="Email">
-                                {client.email ? (
-                                    <a href={`mailto:${client.email}`} className="hover:text-primary transition-colors">{client.email}</a>
-                                ) : (
-                                    <span className="text-voxly-ink-5">—</span>
-                                )}
-                            </DetailTile>
-                            <DetailTile icon={Building} label="Company">
-                                {client.company || <span className="text-voxly-ink-5">—</span>}
-                            </DetailTile>
-                            <DetailTile icon={Send} label="Telegram">
-                                {client.telegram_chat_id ? (
-                                    <span className="font-mono text-[12.5px]">{client.telegram_chat_id}</span>
-                                ) : (
-                                    <span className="text-voxly-ink-5">Not linked</span>
-                                )}
-                            </DetailTile>
-                        </div>
-                    )}
+                <div className="p-5 grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                    <DetailTile icon={Phone} label="Phone">{formatPhone(client.phone)}</DetailTile>
+                    <DetailTile icon={Mail} label="Email">
+                        {client.email ? (
+                            <a href={`mailto:${client.email}`} className="hover:text-primary transition-colors">{client.email}</a>
+                        ) : (
+                            <span className="text-voxly-ink-5">—</span>
+                        )}
+                    </DetailTile>
+                    <DetailTile icon={Building} label="Company">
+                        {client.company || <span className="text-voxly-ink-5">—</span>}
+                    </DetailTile>
+                    <DetailTile icon={Send} label="Telegram">
+                        {client.telegram_chat_id ? (
+                            <span className="font-mono text-[12.5px]">{client.telegram_chat_id}</span>
+                        ) : (
+                            <span className="text-voxly-ink-5">Not linked</span>
+                        )}
+                    </DetailTile>
                 </div>
             </div>
 
@@ -466,6 +364,8 @@ export default function ClientDetailPage() {
                 </div>
             )}
 
+            <ClientFormDialog open={editOpen} onOpenChange={setEditOpen} client={client} />
+
             <ProjectFormDialog
                 open={projectDialogOpen}
                 onOpenChange={(open) => {
@@ -489,6 +389,33 @@ export default function ClientDetailPage() {
                 confirmLabel="Delete project"
                 pending={deleteProjectMutation.isPending}
                 onConfirm={() => projectToDelete && deleteProjectMutation.mutate(projectToDelete.id)}
+            />
+
+            <ConfirmDialog
+                open={deactivateOpen}
+                onOpenChange={setDeactivateOpen}
+                title={`Mark ${client.name} inactive?`}
+                description="Voxly will stop replying to their WhatsApp and Telegram messages until you reactivate them. Projects and conversation history are kept."
+                confirmLabel="Mark inactive"
+                destructive={false}
+                pending={setActive.isPending}
+                onConfirm={() => setActive.mutate({ client, active: false }, { onSuccess: () => setDeactivateOpen(false) })}
+            />
+
+            <ConfirmDialog
+                open={deleteOpen}
+                onOpenChange={setDeleteOpen}
+                title="Delete client?"
+                description={
+                    <>
+                        &ldquo;{client.name}&rdquo; will be deleted
+                        {projects.length > 0 ? <>, along with {projects.length} {projects.length === 1 ? 'project' : 'projects'} and their milestones</> : null}.
+                        This can&rsquo;t be undone.
+                    </>
+                }
+                confirmLabel="Delete client"
+                pending={deleteClient.isPending}
+                onConfirm={() => deleteClient.mutate(client)}
             />
 
             <FollowUpDialog

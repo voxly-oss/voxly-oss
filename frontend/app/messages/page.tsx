@@ -444,7 +444,7 @@ function ConversationCenter() {
                                     Clear filters
                                 </Button>
                             ) : (
-                                <Link href="/clients/new">
+                                <Link href="/clients?new=1">
                                     <Button className="bg-primary hover:bg-primary/90 text-primary-foreground">
                                         <UserIcon className="w-4 h-4 mr-2" />Add a Client
                                     </Button>

@@ -15,10 +15,11 @@ import {
     Users,
     type LucideIcon,
 } from 'lucide-react';
-import { clientsAPI, projectsAPI } from '@/lib/api';
+import { projectsAPI } from '@/lib/api';
+import { clientsQuery } from '@/lib/queries';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
-import type { Client, Project } from '@/types';
+import type { Project } from '@/types';
 
 interface Command {
     id: string;
@@ -32,7 +33,7 @@ interface Command {
 }
 
 const STATIC_COMMANDS: Command[] = [
-    { id: 'new-client', group: 'Actions', label: 'Add a client', href: '/clients/new', icon: Plus, keywords: 'new create' },
+    { id: 'new-client', group: 'Actions', label: 'Add a client', href: '/clients?new=1', icon: Plus, keywords: 'new create' },
     { id: 'ask-ai', group: 'Actions', label: 'Ask the Voxly AI assistant', href: '/chat', icon: Sparkles, keywords: 'chat agent question' },
     { id: 'needs-attention', group: 'Actions', label: 'Conversations that need a human', href: '/messages?status=awaiting_human', icon: MessageSquare, keywords: 'awaiting attention inbox' },
     { id: 'p-dashboard', group: 'Pages', label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, keywords: 'home overview' },
@@ -66,8 +67,7 @@ export default function CommandPalette({ open, onOpenChange }: { open: boolean; 
     const [activeIndex, setActiveIndex] = useState(0);
 
     const { data: clients = [] } = useQuery({
-        queryKey: ['clients'],
-        queryFn: async () => (await clientsAPI.list()).data as Client[],
+        ...clientsQuery,
         enabled: open,
         staleTime: 30_000,
     });
