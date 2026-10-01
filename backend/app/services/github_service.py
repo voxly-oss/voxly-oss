@@ -1,4 +1,4 @@
-from github import Github, GithubException
+from github import Auth, Github, GithubException
 from app.config import get_settings
 from datetime import datetime, timedelta, timezone
 from typing import Dict
@@ -8,7 +8,10 @@ import asyncio
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-github_client = Github(settings.GITHUB_TOKEN)
+# PyGithub rejects an empty token at construction, which made this module (and
+# everything importing it) fail to load wherever GITHUB_TOKEN is unset, such as
+# CI. Without a token, use anonymous access (public repos, 60 requests/hour).
+github_client = Github(auth=Auth.Token(settings.GITHUB_TOKEN)) if settings.GITHUB_TOKEN else Github()
 
 
 def _utc_now() -> datetime:
