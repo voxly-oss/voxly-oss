@@ -1,4 +1,5 @@
 import { test, expect, type Page, type Route } from '@playwright/test';
+import { USER, json, guardApiAndSignIn } from './support/mockApi';
 
 // ──────────────────────────────────────────────────────────────
 // Clients flow, end to end in a real browser against an in-memory API.
@@ -7,18 +8,6 @@ import { test, expect, type Page, type Route } from '@playwright/test';
 // it runs last — Playwright runs handlers newest-first) fails anything not
 // mocked with a 501, so a test can never reach a real backend.
 // ──────────────────────────────────────────────────────────────
-
-const USER = {
-    id: '00000000-0000-0000-0000-000000000001',
-    email: 'owner@voxly.test',
-    full_name: 'Test Owner',
-    agency_name: 'E2E Agency',
-    phone: null,
-    subscription_tier: 'free',
-    is_active: true,
-    created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
-};
 
 interface ClientRec {
     id: string;
@@ -58,19 +47,13 @@ interface Recorded { method: string; path: string; body: Record<string, unknown>
 
 async function mockBackend(page: Page, clients: ClientRec[] = SEED) {
     const db = { clients: clients.map((c) => ({ ...c })), requests: [] as Recorded[] };
-    const json = (route: Route, status: number, body: unknown) =>
-        route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
     const record = (route: Route) => {
         const req = route.request();
         const raw = req.postData();
         db.requests.push({ method: req.method(), path: new URL(req.url()).pathname, body: raw ? JSON.parse(raw) : null });
     };
 
-    await page.route(/\/api\/v1\//, (route) =>
-        json(route, 501, { detail: `Unmocked ${route.request().method()} ${new URL(route.request().url()).pathname}` }),
-    );
-
-    await page.route(/\/api\/v1\/auth\/me(\?.*)?$/, (route) => json(route, 200, USER));
+    await guardApiAndSignIn(page);
     await page.route(/\/api\/v1\/projects(\?.*)?$/, (route) => json(route, 200, []));
     await page.route(/\/api\/v1\/channels(\?.*)?$/, (route) => json(route, 200, []));
     await page.route(/\/api\/v1\/chat\/conversations(\?.*)?$/, (route) =>
@@ -123,7 +106,6 @@ async function mockBackend(page: Page, clients: ClientRec[] = SEED) {
         return route.fallback();
     });
 
-    await page.addInitScript(() => window.localStorage.setItem('access_token', 'e2e-token'));
     return db;
 }
 

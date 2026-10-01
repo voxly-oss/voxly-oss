@@ -191,9 +191,28 @@ export interface TokenResponse {
     token_type: string;
 }
 
+/** GET /api/v1/dashboard/stats — mirrors DashboardStatsResponse in
+ *  backend/app/api/v1/dashboard.py. (The camelCase shape that used to be
+ *  here matched nothing the API returns.) */
 export interface DashboardStats {
-    totalClients: number;
-    activeProjects: number;
-    messagesThisMonth: number;
-    avgResponseTime: string;
+    total_clients: number;
+    active_clients: number;
+    total_projects: number;
+    active_projects: number;
+    completed_projects: number;
+    total_messages: number;
+    messages_this_month: number;
+    messages_last_month: number;
+    /** New clients this month MINUS new clients last month — not a count. */
+    clients_delta: number;
+    projects_delta: number;
+    /** Month-over-month %. Sentinel 100.0 when last month had no messages. */
+    messages_delta_pct: number;
+    /** Last 7 UTC days, oldest first. */
+    messages_by_day: { date: string; count: number }[];
+    recent_activity: { type: string; title: string; timestamp: string }[];
+    recent_ai_messages: { client_name: string; provider: string; response_length: number; timestamp: string }[];
+    integrations: { whatsapp: boolean; telegram: boolean; github: boolean; ai_provider: string };
+    /** % of messages NOT answered without project context (model_used != "no_project"). */
+    ai_accuracy: number;
 }
