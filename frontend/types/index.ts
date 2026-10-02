@@ -169,6 +169,8 @@ export interface ChatLink {
     last_opened_at: string | null;
     /** Coarse, e.g. "Chrome on Android" — no IP or raw user agent is kept. */
     last_opened_device: string | null;
+    /** Devices that get a notification when you reply on Voxly chat. */
+    notification_devices: number;
 }
 
 export interface PortalProfile {
@@ -182,6 +184,12 @@ export interface PortalSession {
     token_type: string;
     expires_in: number;
     profile: PortalProfile;
+}
+
+export interface PortalPushConfig {
+    enabled: boolean;
+    /** base64url applicationServerKey; null while notifications are off server-side. */
+    public_key: string | null;
 }
 
 /** A message as the client sees it: no teammate ids, models or errors. */

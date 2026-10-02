@@ -113,6 +113,10 @@ async function mockInbox(page: Page) {
     await page.routeWebSocket(/\/api\/v1\/chat\/ws/, (ws) => {
         socket = ws;
         ws.onMessage(() => { /* keep-alive pings */ });
+        // Dev-mode StrictMode opens a socket and closes it at once before the
+        // real one; without a close handler the mock sometimes never opens
+        // the second socket for the page.
+        ws.onClose(() => { /* nothing to forward: there is no server */ });
     });
     const push = (event: string, conversationId: string, payload: unknown) =>
         socket!.send(JSON.stringify({ event, timestamp: new Date().toISOString(), conversation_id: conversationId, organization_id: null, payload }));

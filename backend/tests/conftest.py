@@ -105,6 +105,23 @@ def _stub_whatsapp_send(monkeypatch):
         monkeypatch.setattr(target, _noop)
 
 
+@pytest.fixture(autouse=True)
+def _stub_web_push(monkeypatch):
+    """Web Push is off by default in tests, whatever VAPID_PRIVATE_KEY a local
+    .env holds, and the network call is replaced: no test can reach a real
+    push service. tests/test_portal_push.py turns it on with a throwaway key."""
+    from app.services import portal_push
+
+    class _Accepted:
+        status = 201
+
+    async def _accepted(*_args, **_kwargs):
+        return _Accepted()
+
+    monkeypatch.setattr(portal_push, "_vapid", lambda: None)
+    monkeypatch.setattr(portal_push, "webpush_async", _accepted)
+
+
 @pytest.fixture(scope="function")
 def client():
     """Create a test client with fresh database."""
