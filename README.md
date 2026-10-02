@@ -5,6 +5,7 @@
 # 🚀 Voxly
 
 **The Open Source Agency OS**
+Founded & built by Ravinder Pandey (@ravin972)
 
 AI-powered project management, client communication, and automated oversight for modern agencies.
 
@@ -147,7 +148,7 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 <div align="center">
 
-**Built with ❤️ by the Voxly Team**
+**Built with ❤️ by @ravin972**
 
 [⭐ Star this repo](https://github.com/voxly-oss/voxly-oss) • [🐛 Report Bug](https://github.com/voxly-oss/voxly-oss/issues)
 
