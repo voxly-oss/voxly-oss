@@ -33,6 +33,8 @@ from app.config import settings
 from app.database import get_db
 from app.models.client import Client
 from app.models.client_chat_link import ClientChatLink
+from app.models.organization import Organization
+from app.models.user import User
 
 PORTAL_AUDIENCE = "voxly_client"
 PORTAL_SCOPE = "client_portal"
@@ -108,6 +110,19 @@ def active_link(db: Session, link_id: uuid.UUID, client_id: Optional[uuid.UUID] 
 
 def live_client(db: Session, client_id: uuid.UUID) -> Optional[Client]:
     return db.query(Client).filter(Client.id == client_id, Client.deleted_at.is_(None)).first()
+
+
+def agency_name(db: Session, client: Client) -> str:
+    """Who the client is chatting with: the organization's name, else the
+    owner's agency or own name."""
+    name = None
+    if client.org_id:
+        org = db.get(Organization, client.org_id)
+        name = org.name if org else None
+    if not name:
+        owner = db.get(User, client.user_id)
+        name = (owner.agency_name or owner.full_name) if owner else None
+    return name or "Your agency"
 
 
 @dataclass

@@ -14,7 +14,7 @@ from sqlalchemy.orm import object_session
 
 from app.models.client import Client
 from app.models.client_chat_link import ClientChatLink
-from app.services import telegram_service, whatsapp_service
+from app.services import portal_push, telegram_service, whatsapp_service
 
 logger = logging.getLogger(__name__)
 
@@ -68,8 +68,10 @@ class VoxlyAdapter:
 
     There is no provider to hand the text to — the message row already
     exists and message_store pushes it to the client's portal socket — so
-    "sent" here means it is in the client's Voxly inbox. Reachable while the
-    client has an active chat link, even before they first open it.
+    "sent" here means it is in the client's Voxly inbox. Devices that turned
+    notifications on also get a Web Push, in the background and best effort.
+    Reachable while the client has an active chat link, even before they
+    first open it.
     """
     name = "voxly"
 
@@ -85,6 +87,7 @@ class VoxlyAdapter:
         return str(client.id) if has_link else None
 
     async def send_text(self, address: str, text: str) -> SendResult:
+        portal_push.notify_in_background(address, text)
         return SendResult(ok=True)
 
 

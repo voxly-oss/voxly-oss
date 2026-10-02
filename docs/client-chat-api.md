@@ -136,10 +136,31 @@ wss://<api host>/api/v1/portal/ws?token=<SESSION_JWT>
   while disconnected, poll `GET /messages` every ~15 s — a `401` there is
   your signal the session ended.
 
-## 4. Not available yet
+## 4. Notifications
 
-- **Push notifications** when the app is closed — there's no device-token
-  endpoint yet. Until then, the client sees new messages when they open the
-  app (and the agency can also reach them on WhatsApp/Telegram).
+The **web** chat gets notifications through standard Web Push: a push goes
+out when the agency replies on Voxly chat (a teammate or the AI), not for
+WhatsApp/Telegram replies, which those apps notify about already.
+
+```http
+GET  /api/v1/portal/push                  → { "enabled": true, "public_key": "<base64url VAPID key>" }
+POST /api/v1/portal/push/subscriptions    body: PushSubscription.toJSON()   → 204
+POST /api/v1/portal/push/unsubscribe      body: { "endpoint": "..." }       → 204
+```
+
+- `enabled: false` means the server has no push key configured; offer nothing.
+- Only browser push services are accepted (FCM, Mozilla, Apple, Windows);
+  anything else is a `422`. Re-sending the same subscription is fine (the web
+  chat does it on every open).
+- Turning the link off or regenerating it drops every subscribed device.
+
+**A native app can't use these** — Expo/FCM/APNs device tokens aren't Web
+Push subscriptions. A client mode in the mobile app needs a device-token
+endpoint and an Expo push sender on the backend; ask for one when you get
+there. Until then the app sees new messages when it's opened.
+
+## 5. Not available yet
+
+- Native (Expo) push notifications — see above.
 - Typing indicators, read receipts, attachments/media.
 - Per-agency branding beyond `agency_name`.

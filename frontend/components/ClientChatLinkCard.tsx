@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Copy, Link2, Loader2, MessageCircle, RefreshCw, Unlink } from 'lucide-react';
+import { BellRing, Check, Copy, Link2, Loader2, MessageCircle, RefreshCw, Unlink } from 'lucide-react';
 import { chatLinkAPI, getApiErrorMessage } from '@/lib/api';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
@@ -11,7 +11,9 @@ import ConfirmDialog from '@/components/ConfirmDialog';
 import { formatListTime } from '@/components/inbox/inbox-utils';
 import type { ChatLink, Client } from '@/types';
 
-const NO_LINK: ChatLink = { active: false, url: null, created_at: null, last_opened_at: null, last_opened_device: null };
+const NO_LINK: ChatLink = {
+    active: false, url: null, created_at: null, last_opened_at: null, last_opened_device: null, notification_devices: 0,
+};
 
 /** The client's personal Voxly chat link: their own chat with the agency, no
  *  WhatsApp or Telegram needed. Regenerate to cut off a forwarded link. */
@@ -112,11 +114,19 @@ export default function ClientChatLinkCard({ client }: { client: Client }) {
                         </div>
                     </div>
                     <div className="flex items-center justify-between gap-3 flex-wrap mt-3">
-                        <p className="text-[12px] text-voxly-ink-5" data-testid="chat-link-opened">
-                            {link.last_opened_at
-                                ? `Last opened ${formatListTime(link.last_opened_at)}${link.last_opened_device ? ` · ${link.last_opened_device}` : ''}`
-                                : 'Not opened yet'}
-                        </p>
+                        <div className="text-[12px] text-voxly-ink-5 space-y-0.5">
+                            <p data-testid="chat-link-opened">
+                                {link.last_opened_at
+                                    ? `Last opened ${formatListTime(link.last_opened_at)}${link.last_opened_device ? ` · ${link.last_opened_device}` : ''}`
+                                    : 'Not opened yet'}
+                            </p>
+                            {link.notification_devices > 0 && (
+                                <p className="inline-flex items-center gap-1 text-voxly-success" data-testid="chat-link-notifications">
+                                    <BellRing className="w-3 h-3" />
+                                    Notifications on{link.notification_devices > 1 ? ` · ${link.notification_devices} devices` : ''}
+                                </p>
+                            )}
+                        </div>
                         <div className="flex gap-1.5">
                             <Button size="sm" variant="ghost" onClick={() => setConfirm('regenerate')} className="h-8 gap-1.5 text-[12px] text-voxly-ink-6 hover:text-foreground">
                                 <RefreshCw className="w-3.5 h-3.5" /> Regenerate

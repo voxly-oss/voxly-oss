@@ -84,6 +84,12 @@ class Settings(BaseSettings):
     TELEGRAM_BOT_TOKEN: str = ""
     TELEGRAM_WEBHOOK_SECRET: str = ""  # Random token to verify Telegram webhook calls
 
+    # Web Push for the client chat (Voxly chat link). The public key is derived
+    # from the private one; leave it empty and notifications stay off.
+    # Generate: python scripts/generate_vapid_key.py
+    VAPID_PRIVATE_KEY: str = ""
+    VAPID_SUBJECT: str = ""  # mailto: or https: contact for push services; defaults to FRONTEND_URL
+
     # Application
     DEBUG: bool = False
     RATE_LIMIT_PER_MINUTE: int = 60  # Auth endpoints rate limit

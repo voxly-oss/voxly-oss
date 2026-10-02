@@ -27,6 +27,7 @@ twilio==9.10.4
 redis==7.4.0
 celery==5.6.3
 slowapi==0.1.9
+pywebpush==2.5.0  # Web Push for the client chat (Voxly chat link)
 
 # Billing & Payments
 stripe==14.4.1

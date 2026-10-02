@@ -11,6 +11,9 @@ Client side (mounted under /api/v1/portal, portal session auth):
   GET  /messages       the client's thread, newest page first
   POST /messages       the client writes; the AI answers unless a teammate owns it
   WS   /ws?token=      live messages for this client only
+  GET  /push                     is Web Push on, and the key to subscribe with
+  POST /push/subscriptions       notify this device when the agency replies here
+  POST /push/unsubscribe         stop notifying this device
 """
 import asyncio
 import json
@@ -33,14 +36,13 @@ from app.database import SessionLocal, get_db
 from app.models.client import Client
 from app.models.client_chat_link import ClientChatLink
 from app.models.message import Message
-from app.models.organization import Organization
 from app.models.user import User
 from app.rate_limit import limiter
-from app.services import message_store
+from app.services import message_store, portal_push
 from app.services.messaging_core import _get_client_project, process_incoming_message
 from app.services.portal_auth import (
-    PortalContext, active_link, create_session_token, device_label, get_portal_context, link_url,
-    live_client, parse_link_token, resolve_session,
+    PortalContext, active_link, agency_name, create_session_token, device_label, get_portal_context,
+    link_url, live_client, parse_link_token, resolve_session,
 )
 from app.utils.auth import get_current_user
 from app.websockets.manager import portal_manager
@@ -64,6 +66,7 @@ class ChatLinkOut(BaseModel):
     created_at: Optional[str] = None
     last_opened_at: Optional[str] = None
     last_opened_device: Optional[str] = None
+    notification_devices: int = 0  # devices that get a push when you reply on Voxly chat
 
 
 def _current_link(db: Session, client_id: UUID) -> Optional[ClientChatLink]:
@@ -75,7 +78,7 @@ def _current_link(db: Session, client_id: UUID) -> Optional[ClientChatLink]:
     )
 
 
-def _link_out(link: Optional[ClientChatLink]) -> ChatLinkOut:
+def _link_out(db: Session, link: Optional[ClientChatLink]) -> ChatLinkOut:
     if link is None:
         return ChatLinkOut(active=False)
     return ChatLinkOut(
@@ -84,14 +87,17 @@ def _link_out(link: Optional[ClientChatLink]) -> ChatLinkOut:
         created_at=_iso(link.created_at),
         last_opened_at=_iso(link.last_opened_at),
         last_opened_device=link.last_opened_device,
+        notification_devices=portal_push.device_count(db, link),
     )
 
 
 def _revoke_all(db: Session, client_id: UUID) -> int:
+    """Revoke the client's links and stop notifying their devices. Caller commits."""
     now = datetime.utcnow()
     links = db.query(ClientChatLink).filter(ClientChatLink.client_id == client_id, ClientChatLink.revoked_at.is_(None)).all()
     for link in links:
         link.revoked_at = now
+    portal_push.forget_client_devices(db, client_id)
     return len(links)
 
 
@@ -102,7 +108,7 @@ def get_chat_link(
     current_user: Annotated[User, Depends(get_current_user)],
 ):
     client = _owned_client(db, client_id, current_user)
-    return _link_out(_current_link(db, client.id))
+    return _link_out(db, _current_link(db, client.id))
 
 
 @agency_router.post("/{client_id}/chat-link", response_model=ChatLinkOut, status_code=status.HTTP_201_CREATED)
@@ -122,7 +128,7 @@ async def create_chat_link(
     db.commit()
     db.refresh(link)
     await portal_manager.close_all(str(client.id))
-    return _link_out(link)
+    return _link_out(db, link)
 
 
 @agency_router.delete("/{client_id}/chat-link", status_code=status.HTTP_204_NO_CONTENT)
@@ -179,14 +185,7 @@ class PortalSendIn(BaseModel):
 
 
 def _profile(db: Session, client: Client) -> PortalProfile:
-    agency = None
-    if client.org_id:
-        org = db.get(Organization, client.org_id)
-        agency = org.name if org else None
-    if not agency:
-        owner = db.get(User, client.user_id)
-        agency = (owner.agency_name or owner.full_name) if owner else None
-    return PortalProfile(client_id=str(client.id), client_name=client.name, agency_name=agency or "Your agency")
+    return PortalProfile(client_id=str(client.id), client_name=client.name, agency_name=agency_name(db, client))
 
 
 @router.post("/session", response_model=SessionOut)
@@ -280,6 +279,67 @@ async def portal_send(
     await message_store.broadcast_message(client, inbound)
     background_tasks.add_task(_answer, client.id, inbound.id)
     return PortalMessage(**message_store.serialize_for_client(inbound))
+
+
+# ── Notifications (Web Push) ─────────────────────────────────────────────────
+
+
+class PushConfigOut(BaseModel):
+    enabled: bool
+    public_key: Optional[str] = None  # the applicationServerKey to subscribe with
+
+
+class PushKeys(BaseModel):
+    p256dh: str = Field(..., min_length=80, max_length=128)
+    auth: str = Field(..., min_length=16, max_length=64)
+
+
+class PushSubscriptionIn(BaseModel):
+    """PushSubscription.toJSON() from the browser (expirationTime is ignored)."""
+    endpoint: str = Field(..., min_length=20, max_length=1024)
+    keys: PushKeys
+
+
+class PushUnsubscribeIn(BaseModel):
+    endpoint: str = Field(..., min_length=20, max_length=1024)
+
+
+@router.get("/push", response_model=PushConfigOut)
+def push_config(context: Annotated[PortalContext, Depends(get_portal_context)]):
+    return PushConfigOut(enabled=portal_push.enabled(), public_key=portal_push.public_key())
+
+
+@router.post("/push/subscriptions", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("10/minute")
+def push_subscribe(
+    request: Request,  # required by slowapi's limiter
+    payload: PushSubscriptionIn,
+    context: Annotated[PortalContext, Depends(get_portal_context)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    """Notify this device when the agency replies on Voxly chat. Idempotent:
+    the chat re-sends its subscription every time it opens."""
+    if not portal_push.enabled():
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Notifications aren't available for this chat yet.")
+    if not portal_push.push_endpoint_allowed(payload.endpoint):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="This browser's push service isn't supported.")
+    if not portal_push.valid_keys(payload.keys.p256dh, payload.keys.auth):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid push subscription keys.")
+    portal_push.save_subscription(
+        db, context.client, context.link, payload.endpoint, payload.keys.p256dh, payload.keys.auth,
+        device_label(request.headers.get("user-agent")),
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/push/unsubscribe", status_code=status.HTTP_204_NO_CONTENT)
+def push_unsubscribe(
+    payload: PushUnsubscribeIn,
+    context: Annotated[PortalContext, Depends(get_portal_context)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    portal_push.remove_subscription(db, context.client, payload.endpoint)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.websocket("/ws")

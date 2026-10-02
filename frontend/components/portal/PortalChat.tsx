@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils';
 import { isUnauthorized, portalAPI, portalSocketUrl, type StoredSession } from '@/lib/portal';
 import { getApiErrorMessage } from '@/lib/api';
 import type { PortalMessage } from '@/types';
+import { NotificationPrompt, NotificationToggle, useChatNotifications } from '@/components/portal/PortalNotifications';
 import {
     avatarTone, channelLabel, dayLabel, flattenThread, formatClock, initials, sameDay, upsertThreadMessage,
     type ThreadPages,
@@ -266,6 +267,8 @@ export default function PortalChat({ session, onEnded }: PortalChatProps) {
         send(m.body);
     };
 
+    const notifications = useChatNotifications(token);
+
     /* ── Install as an app, where the browser offers it ── */
 
     const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
@@ -304,7 +307,9 @@ export default function PortalChat({ session, onEnded }: PortalChatProps) {
                         <Download className="w-3.5 h-3.5" /> Install app
                     </button>
                 )}
+                <NotificationToggle notifications={notifications} />
             </header>
+            <NotificationPrompt notifications={notifications} agencyName={agencyName} />
 
             <div className="relative flex-1 min-h-0">
                 <div
