@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { PortalMessage, PortalMessagePage, PortalProfile, PortalSession } from '@/types';
+import type { PortalMessage, PortalMessagePage, PortalProfile, PortalPushConfig, PortalSession } from '@/types';
 
 /* The client's side of the Voxly chat link (backend/app/api/v1/portal.py).
 
@@ -22,6 +22,12 @@ export const portalAPI = {
     messages: (token: string, before?: string) =>
         portal.get<PortalMessagePage>('/api/v1/portal/messages', { ...bearer(token), params: { before, limit: 50 } }),
     send: (token: string, text: string) => portal.post<PortalMessage>('/api/v1/portal/messages', { text }, bearer(token)),
+    /** Is Web Push on, and the applicationServerKey to subscribe with. */
+    pushConfig: (token: string) => portal.get<PortalPushConfig>('/api/v1/portal/push', bearer(token)),
+    subscribePush: (token: string, subscription: PushSubscriptionJSON) =>
+        portal.post('/api/v1/portal/push/subscriptions', subscription, bearer(token)),
+    unsubscribePush: (token: string, endpoint: string) =>
+        portal.post('/api/v1/portal/push/unsubscribe', { endpoint }, bearer(token)),
 };
 
 export const portalSocketUrl = (token: string) =>

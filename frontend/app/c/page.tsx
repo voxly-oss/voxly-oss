@@ -4,6 +4,7 @@ import { useCallback, useMemo, useState, useSyncExternalStore } from 'react';
 import PortalChat from '@/components/portal/PortalChat';
 import { LinkEnded, NoSession, Opening } from '@/components/portal/PortalStates';
 import { clearSession, parseSession, readSessionRaw, subscribeSession } from '@/lib/portal';
+import { forgetNotifications } from '@/lib/portal-push';
 
 // The server can't see localStorage; render "Opening…" until the client can.
 const ON_SERVER = '__server__';
@@ -17,6 +18,7 @@ export default function ClientChatPage() {
     const onEnded = useCallback(() => {
         setEndedFor({ agency: session?.profile.agency_name ?? null });
         clearSession();
+        void forgetNotifications();
     }, [session]);
 
     if (raw === ON_SERVER) return <Opening />;

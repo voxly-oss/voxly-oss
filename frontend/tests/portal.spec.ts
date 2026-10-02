@@ -1,52 +1,11 @@
-import { test, expect, devices, type Page, type WebSocketRoute } from '@playwright/test';
+import { test, expect, devices, type Page } from '@playwright/test';
 import { USER, json, guardApiAndSignIn } from './support/mockApi';
+import { LINK, PROFILE, mockPortal, type Msg } from './support/mockPortal';
 
 /* The client's side of the Voxly chat link (/c/<link> → /c), against a fully
    mocked portal API and socket, plus the agency's chat-link card. */
 
-const LINK = 'AAAAAAAAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBB';
-const PROFILE = { client_id: 'c1', client_name: 'Acme Corp', agency_name: 'Northwind Studio' };
-const SESSION = { access_token: 'portal-session-token', token_type: 'bearer', expires_in: 2592000, profile: PROFILE };
-
 const minsAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
-
-type Msg = { id: string; direction: 'inbound' | 'outbound'; author_type: 'client' | 'ai' | 'agent'; channel: string; body: string; status: string; created_at: string };
-
-const thread = (): Msg[] => [
-    { id: 'm1', direction: 'inbound', author_type: 'client', channel: 'voxly', body: 'When do we launch?', status: 'received', created_at: minsAgo(30) },
-    { id: 'm2', direction: 'outbound', author_type: 'ai', channel: 'voxly', body: 'Your site goes live on Friday.', status: 'sent', created_at: minsAgo(29) },
-    { id: 'm3', direction: 'outbound', author_type: 'agent', channel: 'whatsapp', body: 'Sent you the invoice too.', status: 'sent', created_at: minsAgo(10) },
-];
-
-/** Portal endpoints only — a client has no agency login. Anything unmocked is a 501. */
-async function mockPortal(page: Page, opts: { session?: 'ok' | 'revoked'; messages?: 'ok' | 'ended' } = {}) {
-    const db = { messages: thread(), sends: [] as unknown[], sessionTokens: [] as string[], authHeaders: [] as (string | null)[] };
-    await page.route(/\/api\/v1\//, (r) => json(r, 501, { detail: `Unmocked ${new URL(r.request().url()).pathname}` }));
-    await page.route(/\/api\/v1\/portal\/session$/, (r) => {
-        db.sessionTokens.push((r.request().postDataJSON() as { token: string }).token);
-        return opts.session === 'revoked'
-            ? json(r, 404, { detail: "This chat link isn't active anymore. Ask your agency for a new one." })
-            : json(r, 200, SESSION);
-    });
-    await page.route(/\/api\/v1\/portal\/messages(\?.*)?$/, (r) => {
-        db.authHeaders.push(r.request().headers()['authorization'] ?? null);
-        if (opts.messages === 'ended') return json(r, 401, { detail: 'This chat link is no longer active.' });
-        if (r.request().method() === 'GET') return json(r, 200, { messages: db.messages, has_more: false });
-        const { text } = r.request().postDataJSON() as { text: string };
-        db.sends.push(text);
-        const created: Msg = { id: `m-new-${db.sends.length}`, direction: 'inbound', author_type: 'client', channel: 'voxly', body: text, status: 'received', created_at: new Date().toISOString() };
-        db.messages.push(created);
-        return json(r, 201, created);
-    });
-    let socket: WebSocketRoute | null = null;
-    await page.routeWebSocket(/\/api\/v1\/portal\/ws/, (ws) => {
-        socket = ws;
-        ws.onMessage(() => { /* pings */ });
-    });
-    const push = (event: string, message: Msg) =>
-        socket!.send(JSON.stringify({ event, timestamp: new Date().toISOString(), conversation_id: 'c1', organization_id: null, payload: { message } }));
-    return { db, push };
-}
 
 const bubbles = (page: Page) => page.getByTestId('portal-message');
 
